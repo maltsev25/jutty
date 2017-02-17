@@ -1,11 +1,11 @@
-var express = require('express');
-var http = require('http');
-var https = require('https');
-var path = require('path');
-var server = require('socket.io');
-var pty = require('pty.js');
-var fs = require('fs');
-var log = require('yalm');
+var express =   require('express');
+var http =      require('http');
+var https =     require('https');
+var path =      require('path');
+var server =    require('socket.io');
+var pty =       require('pty.js');
+var fs =        require('fs');
+var log =       require('yalm');
 log.setLevel('debug');
 
 var opts = require('optimist')
@@ -101,7 +101,8 @@ io.on('connection', function(socket){
         socket.emit('output', data);
     });
     term.on('exit', function (code) {
-        log.info("PID=" + term.pid + " ENDED")
+        log.info("PID=" + term.pid + " ENDED");
+        socket.emit('end');
     });
     socket.on('resize', function (data) {
         term.resize(data.col, data.row);
