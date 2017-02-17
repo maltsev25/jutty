@@ -19,8 +19,12 @@
 // hterm/js/hterm.js
 // hterm/js/hterm_frame.js
 // hterm/js/hterm_keyboard.js
+// hterm/js/hterm_keyboard_bindings.js
 // hterm/js/hterm_keyboard_keymap.js
+// hterm/js/hterm_keyboard_keypattern.js
 // hterm/js/hterm_options.js
+// hterm/js/hterm_parser.js
+// hterm/js/hterm_parser_identifiers.js
 // hterm/js/hterm_preference_manager.js
 // hterm/js/hterm_pubsub.js
 // hterm/js/hterm_screen.js
@@ -351,10 +355,16 @@ lib.colors.x11ToCSS = function(v) {
  * @return {string|Array.<string>} The converted value or values.
  */
 lib.colors.hexToRGB = function(arg) {
+  var hex16 = lib.colors.re_.hex16;
+  var hex24 = lib.colors.re_.hex24;
+
   function convert(hex) {
-    var re = (hex.length == 4) ?
-        lib.colors.re_.hex16 : lib.colors.re_.hex24;
-    var ary = hex.match(re)
+    if (hex.length == 4) {
+      hex = hex.replace(hex16, function(h, r, g, b) {
+        return "#" + r + r + g + g + b + b;
+      });
+    }
+    var ary = hex.match(hex24);
     if (!ary)
       return null;
 
@@ -4544,6 +4554,56 @@ lib.encodeUTF8 = function(str) {
  * This implementation assumes that characters are encoded in ISO 10646.
  */
 
+/**
+ * This library relies on the use of codePointAt, which is not supported in
+ * all browsers. Polyfil if not.  See
+ * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/codePointAt#Polyfill
+ */
+if (!String.prototype.codePointAt) {
+  (function() {
+    'use strict'; // needed to support `apply`/`call` with `undefined`/`null`
+    var codePointAt = function(position) {
+      if (this == null) {
+        throw TypeError();
+      }
+      var string = String(this);
+      var size = string.length;
+      // `ToInteger`
+      var index = position ? Number(position) : 0;
+      if (index != index) { // better `isNaN`
+        index = 0;
+      }
+      // Account for out-of-bounds indices:
+      if (index < 0 || index >= size) {
+        return undefined;
+      }
+      // Get the first code unit
+      var first = string.charCodeAt(index);
+      var second;
+      if ( // check if it’s the start of a surrogate pair
+        first >= 0xD800 && first <= 0xDBFF && // high surrogate
+        size > index + 1 // there is a next code unit
+      ) {
+        second = string.charCodeAt(index + 1);
+        if (second >= 0xDC00 && second <= 0xDFFF) { // low surrogate
+          // http://mathiasbynens.be/notes/javascript-encoding#surrogate-formulae
+          return (first - 0xD800) * 0x400 + second - 0xDC00 + 0x10000;
+        }
+      }
+      return first;
+    };
+    if (Object.defineProperty) {
+      Object.defineProperty(String.prototype, 'codePointAt', {
+        'value': codePointAt,
+        'configurable': true,
+        'writable': true
+      });
+    } else {
+      String.prototype.codePointAt = codePointAt;
+    }
+  }());
+}
+
 lib.wc = {};
 
 // Width of a nul character.
@@ -4779,6 +4839,8 @@ lib.wc.charWidthDisregardAmbiguous = function(ucs) {
       (ucs >= 0xffe0 && ucs <= 0xffe6) ||
       (ucs >= 0x20000 && ucs <= 0x2fffd) ||
       (ucs >= 0x30000 && ucs <= 0x3fffd)));
+  // TODO: emoji characters usually require space for wide characters although
+  // East Asian width spec says nothing. Should we add special cases for them?
 };
 
 /**
@@ -4806,11 +4868,13 @@ lib.wc.charWidthRegardAmbiguous = function(ucs) {
 lib.wc.strWidth = function(str) {
   var width, rv = 0;
 
-  for (var i = 0; i < str.length; i++) {
-    width = lib.wc.charWidth(str.charCodeAt(i));
+  for (var i = 0; i < str.length;) {
+    var codePoint = str.codePointAt(i);
+    width = lib.wc.charWidth(codePoint);
     if (width < 0)
       return -1;
     rv += width;
+    i += (codePoint <= 0xffff) ? 1 : 2;
   }
 
   return rv;
@@ -4967,7 +5031,7 @@ lib.registerInit('hterm', function(onInit) {
   var isPackagedApp = false;
   if (window.chrome && chrome.runtime && chrome.runtime.getManifest) {
     var manifest = chrome.runtime.getManifest();
-    var isPackagedApp = manifest.app && manifest.app.background;
+    isPackagedApp = manifest.app && manifest.app.background;
   }
 
   if (isPackagedApp) {
@@ -5081,7 +5145,7 @@ hterm.Size.prototype.setTo = function(that) {
  * Test if another hterm.Size instance is equal to this one.
  *
  * @param {hterm.Size} that The other hterm.Size instance.
- * @return {boolen} True if both instances have the same width/height, false
+ * @return {boolean} True if both instances have the same width/height, false
  *     otherwise.
  */
 hterm.Size.prototype.equals = function(that) {
@@ -5160,7 +5224,7 @@ hterm.RowCol.prototype.setTo = function(that) {
  * Test if another hterm.RowCol instance is equal to this one.
  *
  * @param {hterm.RowCol} that The other hterm.RowCol instance.
- * @return {boolen} True if both instances have the same row/column, false
+ * @return {boolean} True if both instances have the same row/column, false
  *     otherwise.
  */
 hterm.RowCol.prototype.equals = function(that) {
@@ -5245,7 +5309,7 @@ hterm.Frame.prototype.onLoad_ = function() {
   this.messageChannel_.port1.start();
   this.iframe_.contentWindow.postMessage(
       {name: 'ipc-init', argv: [{messagePort: this.messageChannel_.port2}]},
-      [this.messageChannel_.port2], this.url);
+      this.url, [this.messageChannel_.port2]);
 };
 
 /**
@@ -5426,6 +5490,8 @@ hterm.Keyboard = function(terminal) {
    * The current key map.
    */
   this.keyMap = new hterm.Keyboard.KeyMap(this);
+
+  this.bindings = new hterm.Keyboard.Bindings(this);
 
   /**
    * none: Disable any AltGr related munging.
@@ -5718,16 +5784,16 @@ hterm.Keyboard.prototype.onKeyPress_ = function(e) {
 };
 
 /**
- * Prevent default handling for non-shifted event.
+ * Prevent default handling for non-ctrl-shifted event.
  *
  * When combined with Chrome permission 'app.window.fullscreen.overrideEsc',
  * and called for both key down and key up events,
  * the ESC key remains usable within fullscreen Chrome app windows.
  */
-hterm.Keyboard.prototype.preventChromeAppNonShiftDefault_ = function(e) {
+hterm.Keyboard.prototype.preventChromeAppNonCtrlShiftDefault_ = function(e) {
   if (!window.chrome || !window.chrome.app || !window.chrome.app.window)
     return;
-  if (!e.shiftKey)
+  if (!e.ctrlKey || !e.shiftKey)
     e.preventDefault();
 };
 
@@ -5740,7 +5806,7 @@ hterm.Keyboard.prototype.onKeyUp_ = function(e) {
     this.altKeyPressed = this.altKeyPressed & ~(1 << (e.location - 1));
 
   if (e.keyCode == 27)
-    this.preventChromeAppNonShiftDefault_(e);
+    this.preventChromeAppNonCtrlShiftDefault_(e);
 };
 
 /**
@@ -5751,7 +5817,7 @@ hterm.Keyboard.prototype.onKeyDown_ = function(e) {
     this.altKeyPressed = this.altKeyPressed | (1 << (e.location - 1));
 
   if (e.keyCode == 27)
-    this.preventChromeAppNonShiftDefault_(e);
+    this.preventChromeAppNonCtrlShiftDefault_(e);
 
   var keyDef = this.keyMap.keyDefs[e.keyCode];
   if (!keyDef) {
@@ -5832,6 +5898,33 @@ hterm.Keyboard.prototype.onKeyDown_ = function(e) {
     action = getAction('normal');
   }
 
+  // If e.maskShiftKey was set (during getAction) it means the shift key is
+  // already accounted for in the action, and we should not act on it any
+  // further. This is currently only used for Ctrl-Shift-Tab, which should send
+  // "CSI Z", not "CSI 1 ; 2 Z".
+  var shift = !e.maskShiftKey && e.shiftKey;
+
+  var keyDown = {
+    keyCode: e.keyCode,
+    shift: e.shiftKey, // not `var shift` from above.
+    ctrl: control,
+    alt: alt,
+    meta: meta
+  };
+
+  var binding = this.bindings.getBinding(keyDown);
+
+  if (binding) {
+    // Clear out the modifier bits so we don't try to munge the sequence
+    // further.
+    shift = control = alt = meta = false;
+    resolvedActionType = 'normal';
+    action = binding.action;
+
+    if (typeof action == 'function')
+      action = action.call(this, this.terminal, keyDown);
+  }
+
   if (alt && this.altSendsWhat == 'browser-key' && action == DEFAULT) {
     // When altSendsWhat is 'browser-key', we wait for the keypress event.
     // In keypress, the browser should have set the event.charCode to the
@@ -5860,7 +5953,7 @@ hterm.Keyboard.prototype.onKeyDown_ = function(e) {
       action = action.apply(this.keyMap, [e, keyDef]);
 
     if (action == DEFAULT && keyDef.keyCap.length == 2)
-      action = keyDef.keyCap.substr((e.shiftKey ? 1 : 0), 1);
+      action = keyDef.keyCap.substr((shift ? 1 : 0), 1);
   }
 
   e.preventDefault();
@@ -5883,11 +5976,6 @@ hterm.Keyboard.prototype.onKeyDown_ = function(e) {
   } else if (resolvedActionType == 'meta') {
     meta = false;
   }
-
-  // Maybe strip the shift modifier too, for the same reason as above.
-  // This is only used for Ctrl-Shift-Tab, which should send "CSI Z", not
-  // "CSI 1 ; 2 Z".
-  var shift = !e.maskShiftKey && e.shiftKey;
 
   if (action.substr(0, 2) == '\x1b[' && (alt || control || shift)) {
     // The action is an escape sequence that and it was triggered in the
@@ -5923,7 +6011,7 @@ hterm.Keyboard.prototype.onKeyDown_ = function(e) {
 
   } else {
     if (action === DEFAULT) {
-      action = keyDef.keyCap.substr((e.shiftKey ? 1 : 0), 1);
+      action = keyDef.keyCap.substr((shift ? 1 : 0), 1);
 
       if (control) {
         var unshifted = keyDef.keyCap.substr(0, 1);
@@ -5949,6 +6037,182 @@ hterm.Keyboard.prototype.onKeyDown_ = function(e) {
   }
 
   this.terminal.onVTKeystroke(action);
+};
+// SOURCE FILE: hterm/js/hterm_keyboard_bindings.js
+// Copyright (c) 2015 The Chromium OS Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+'use strict';
+
+/**
+ * A mapping from hterm.Keyboard.KeyPattern to an action.
+ *
+ * TODO(rginda): For now this bindings code is only used for user overrides.
+ * hterm.Keyboard.KeyMap still handles all of the built-in key mappings.
+ * It'd be nice if we migrated that over to be hterm.Keyboard.Bindings based.
+ */
+hterm.Keyboard.Bindings = function() {
+  this.bindings_ = {};
+};
+
+/**
+ * Remove all bindings.
+ */
+hterm.Keyboard.Bindings.prototype.clear = function () {
+  this.bindings_ = {};
+};
+
+/**
+ * Add a new binding.
+ *
+ * Internal API that assumes parsed objects as inputs.
+ * See the public addBinding for more details.
+ *
+ * @param {hterm.Keyboard.KeyPattern} keyPattern
+ * @param {string|function|hterm.Keyboard.KeyAction} action
+ */
+hterm.Keyboard.Bindings.prototype.addBinding_ = function(keyPattern, action) {
+  var binding = null;
+  var list = this.bindings_[keyPattern.keyCode];
+  if (list) {
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].keyPattern.matchKeyPattern(keyPattern)) {
+        binding = list[i];
+        break;
+      }
+    }
+  }
+
+  if (binding) {
+    binding.action = action;
+  } else {
+    binding = {keyPattern: keyPattern, action: action};
+
+    if (!list) {
+      this.bindings_[keyPattern.keyCode] = [binding];
+    } else {
+      this.bindings_[keyPattern.keyCode].push(binding);
+
+      list.sort(function(a, b) {
+        return hterm.Keyboard.KeyPattern.sortCompare(
+            a.keyPattern, b.keyPattern);
+      });
+    }
+  }
+};
+
+/**
+ * Add a new binding.
+ *
+ * If a binding for the keyPattern already exists it will be overridden.
+ *
+ * More specific keyPatterns take precedence over those with wildcards.  Given
+ * bindings for "Ctrl-A" and "Ctrl-*-A", and a "Ctrl-A" keydown, the "Ctrl-A"
+ * binding will match even if "Ctrl-*-A" was created last.
+ *
+ * If action is a string, it will be passed through hterm.Parser.parseKeyAction.
+ *
+ * For example:
+ *   // Will replace Ctrl-P keystrokes with the string "hiya!".
+ *   addBinding('Ctrl-P', "'hiya!'");
+ *   // Will cancel the keystroke entirely (make it do nothing).
+ *   addBinding('Alt-D', hterm.Keyboard.KeyActions.CANCEL);
+ *   // Will execute the code and return the action.
+ *   addBinding('Ctrl-T', function() {
+ *     console.log('Got a T!');
+ *     return hterm.Keyboard.KeyActions.PASS;
+ *   });
+ *
+ * @param {string|hterm.Keyboard.KeyPattern} keyPattern
+ * @param {string|function|hterm.Keyboard.KeyAction} action
+ */
+hterm.Keyboard.Bindings.prototype.addBinding = function(key, action) {
+  // If we're given a hterm.Keyboard.KeyPattern object, pass it down.
+  if (typeof key != 'string') {
+    this.addBinding_(key, action);
+    return;
+  }
+
+  // Here we treat key as a string.
+  var p = new hterm.Parser();
+
+  p.reset(key);
+  var sequence;
+
+  try {
+    sequence = p.parseKeySequence();
+  } catch (ex) {
+    console.error(ex);
+    return;
+  }
+
+  if (!p.isComplete()) {
+    console.error(p.error('Expected end of sequence: ' + sequence));
+    return;
+  }
+
+  // If action is a string, parse it.  Otherwise assume it's callable.
+  if (typeof action == 'string') {
+    p.reset(action);
+    try {
+      action = p.parseKeyAction();
+    } catch (ex) {
+      console.error(ex);
+      return;
+    }
+  }
+
+  if (!p.isComplete()) {
+    console.error(p.error('Expected end of sequence: ' + sequence));
+    return;
+  }
+
+  this.addBinding_(new hterm.Keyboard.KeyPattern(sequence), action);
+};
+
+/**
+ * Add multiple bindings at a time using a map of {string: string, ...}
+ *
+ * This uses hterm.Parser to parse the maps key into KeyPatterns, and the
+ * map values into {string|function|KeyAction}.
+ *
+ * For example:
+ *  {
+ *    // Will replace Ctrl-P keystrokes with the string "hiya!".
+ *    'Ctrl-P': "'hiya!'",
+ *    // Will cancel the keystroke entirely (make it do nothing).
+ *    'Alt-D': hterm.Keyboard.KeyActions.CANCEL,
+ *  }
+ *
+ * @param {Object} map
+ */
+hterm.Keyboard.Bindings.prototype.addBindings = function(map) {
+  for (var key in map) {
+    this.addBinding(key, map[key]);
+  }
+};
+
+/**
+ * Return the binding that is the best match for the given keyDown record,
+ * or null if there is no match.
+ *
+ * @param {Object} keyDown An object with a keyCode property and zero or
+ *   more boolean properties representing key modifiers.  These property names
+ *   must match those defined in hterm.Keyboard.KeyPattern.modifiers.
+ */
+hterm.Keyboard.Bindings.prototype.getBinding = function(keyDown) {
+  var list = this.bindings_[keyDown.keyCode];
+  if (!list)
+    return null;
+
+  for (var i = 0; i < list.length; i++) {
+    var binding = list[i];
+    if (binding.keyPattern.matchKeyDown(keyDown))
+      return binding;
+  }
+
+  return null;
 };
 // SOURCE FILE: hterm/js/hterm_keyboard_keymap.js
 // Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
@@ -6049,13 +6313,6 @@ hterm.Keyboard.KeyMap.prototype.addKeyDefs = function(var_args) {
                      meta: arguments[i][5]
                    });
   }
-};
-
-/**
- * Inherit from hterm.Keyboard.KeyMap, as defined in keyboard.js.
- */
-hterm.Keyboard.KeyMap.prototype = {
-  __proto__: hterm.Keyboard.KeyMap.prototype
 };
 
 /**
@@ -6293,8 +6550,8 @@ hterm.Keyboard.KeyMap.prototype.reset = function() {
     [103, '[KP7]', DEFAULT, DEFAULT, DEFAULT, DEFAULT],
     [104, '[KP8]', DEFAULT, DEFAULT, DEFAULT, DEFAULT],
     [105, '[KP9]', DEFAULT, DEFAULT, DEFAULT, DEFAULT],
-    [107, '[KP+]', DEFAULT, DEFAULT, DEFAULT, DEFAULT],
-    [109, '[KP-]', DEFAULT, DEFAULT, DEFAULT, DEFAULT],
+    [107, '[KP+]', DEFAULT, c('onPlusMinusZero_'), DEFAULT, c('onPlusMinusZero_')],
+    [109, '[KP-]', DEFAULT, c('onPlusMinusZero_'), DEFAULT, c('onPlusMinusZero_')],
     [106, '[KP*]', DEFAULT, DEFAULT, DEFAULT, DEFAULT],
     [111, '[KP/]', DEFAULT, DEFAULT, DEFAULT, DEFAULT],
     [110, '[KP.]', DEFAULT, DEFAULT, DEFAULT, DEFAULT],
@@ -6465,8 +6722,6 @@ hterm.Keyboard.KeyMap.prototype.onCtrlC_ = function(e, keyDef) {
       if (this.keyboard.terminal.clearSelectionAfterCopy) {
         setTimeout(selection.collapseToEnd.bind(selection), 50);
       }
-      if (this.keyboard.terminal.prefs_.get('enable-clipboard-notice'))
-        setTimeout(this.keyboard.terminal.showOverlay.bind(this.keyboard.terminal, hterm.notifyCopyMessage, 500), 200);
       return hterm.Keyboard.KeyActions.PASS;
     }
 
@@ -6608,7 +6863,7 @@ hterm.Keyboard.KeyMap.prototype.onPlusMinusZero_ = function(e, keyDef) {
   } else {
     var size = this.keyboard.terminal.getFontSize();
 
-    if (cap == '-') {
+    if (cap == '-' || keyDef.keyCap == '[KP-]') {
       size -= 1;
     } else {
       size += 1;
@@ -6618,6 +6873,104 @@ hterm.Keyboard.KeyMap.prototype.onPlusMinusZero_ = function(e, keyDef) {
   }
 
   return hterm.Keyboard.KeyActions.CANCEL;
+};
+// SOURCE FILE: hterm/js/hterm_keyboard_keypattern.js
+// Copyright (c) 2015 The Chromium OS Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+'use strict';
+
+/**
+ * A record of modifier bits and keycode used to define a key binding.
+ *
+ * The modifier names are enumerated in the static KeyPattern.modifiers
+ * property below.  Each modifier can be true, false, or "*".  True means
+ * the modifier key must be present, false means it must not, and "*" means
+ * it doesn't matter.
+ */
+hterm.Keyboard.KeyPattern = function(spec) {
+  this.wildcardCount = 0;
+  this.keyCode = spec.keyCode;
+
+  hterm.Keyboard.KeyPattern.modifiers.forEach(function(mod) {
+    this[mod] = spec[mod] || false;
+    if (this[mod] == '*')
+      this.wildcardCount++;
+  }.bind(this));
+};
+
+/**
+ * Valid modifier names.
+ */
+hterm.Keyboard.KeyPattern.modifiers = [
+  'shift', 'ctrl', 'alt', 'meta'
+];
+
+/**
+ * A compare callback for Array.prototype.sort().
+ *
+ * The bindings code wants to be sure to search through the strictest key
+ * patterns first, so that loosely defined patterns have a lower priority than
+ * exact patterns.
+ *
+ * @param {hterm.Keyboard.KeyPattern} a
+ * @param {hterm.Keyboard.KeyPattern} b
+ */
+hterm.Keyboard.KeyPattern.sortCompare = function(a, b) {
+  if (a.wildcardCount < b.wildcardCount)
+    return -1;
+
+  if (a.wildcardCount > b.wildcardCount)
+    return 1;
+
+  return 0;
+};
+
+/**
+ * Private method used to match this key pattern against other key patterns
+ * or key down events.
+ *
+ * @param {Object} The object to match.
+ * @param {boolean} True if we should ignore wildcards.  Useful when you want
+ *   to perform and exact match against another key pattern.
+ */
+hterm.Keyboard.KeyPattern.prototype.match_ = function(obj, exactMatch) {
+  if (this.keyCode != obj.keyCode)
+    return false;
+
+  var rv = true;
+
+  hterm.Keyboard.KeyPattern.modifiers.forEach(function(mod) {
+    var modValue = (mod in obj) ? obj[mod] : false;
+    if (!rv || (!exactMatch && this[mod] == '*') || this[mod] == modValue)
+      return;
+
+    rv = false;
+  }.bind(this));
+
+  return rv;
+};
+
+/**
+ * Return true if the given keyDown object is a match for this key pattern.
+ *
+ * @param {Object} keyDown An object with a keyCode property and zero or
+ *   more boolean properties representing key modifiers.  These property names
+ *   must match those defined in hterm.Keyboard.KeyPattern.modifiers.
+ */
+hterm.Keyboard.KeyPattern.prototype.matchKeyDown = function(keyDown) {
+  return this.match_(keyDown, false);
+};
+
+/**
+ * Return true if the given hterm.Keyboard.KeyPattern is exactly the same as
+ * this one.
+ *
+ * @param {hterm.Keyboard.KeyPattern}
+ */
+hterm.Keyboard.KeyPattern.prototype.matchKeyPattern = function(keyPattern) {
+  return this.match_(keyPattern, true);
 };
 // SOURCE FILE: hterm/js/hterm_options.js
 // Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
@@ -6661,6 +7014,555 @@ hterm.Options = function(opt_copy) {
   this.reverseVideo = opt_copy ? opt_copy.reverseVideo : false;
   this.bracketedPaste = opt_copy ? opt_copy.bracketedPaste : false;
 };
+// SOURCE FILE: hterm/js/hterm_parser.js
+// Copyright (c) 2015 The Chromium OS Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+'use strict';
+
+lib.rtdep('hterm.Keyboard.KeyActions');
+
+/**
+ * @constructor
+ * Parses the key definition syntax used for user keyboard customizations.
+ */
+hterm.Parser = function() {
+  /**
+   * @type {string} The source string.
+   */
+  this.source = '';
+
+  /**
+   * @type {number} The current position.
+   */
+  this.pos = 0;
+
+  /**
+   * @type {string?} The character at the current position.
+   */
+  this.ch = null;
+};
+
+hterm.Parser.prototype.error = function(message) {
+  return new Error('Parse error at ' + this.pos + ': ' + message);
+};
+
+hterm.Parser.prototype.isComplete = function() {
+  return this.pos == this.source.length;
+};
+
+hterm.Parser.prototype.reset = function(source, opt_pos) {
+  this.source = source;
+  this.pos = opt_pos || 0;
+  this.ch = source.substr(0, 1);
+};
+
+/**
+ * Parse a key sequence.
+ *
+ * A key sequence is zero or more of the key modifiers defined in
+ * hterm.Parser.identifiers.modifierKeys followed by a key code.  Key
+ * codes can be an integer or an identifier from
+ * hterm.Parser.identifiers.keyCodes.  Modifiers and keyCodes should be joined
+ * by the dash character.
+ *
+ * An asterisk "*" can be used to indicate that the unspecified modifiers
+ * are optional.
+ *
+ * For example:
+ *   A: Matches only an unmodified "A" character.
+ *   65: Same as above.
+ *   0x41: Same as above.
+ *   Ctrl-A: Matches only Ctrl-A.
+ *   Ctrl-65: Same as above.
+ *   Ctrl-0x41: Same as above.
+ *   Ctrl-Shift-A: Matches only Ctrl-Shift-A.
+ *   Ctrl-*-A: Matches Ctrl-A, as well as any other key sequence that includes
+ *     at least the Ctrl and A keys.
+ *
+ * @return {Object} An object with shift, ctrl, alt, meta, keyCode
+ *   properties.
+ */
+hterm.Parser.prototype.parseKeySequence = function() {
+  var rv = {
+    keyCode: null
+  };
+
+  for (var k in hterm.Parser.identifiers.modifierKeys) {
+    rv[hterm.Parser.identifiers.modifierKeys[k]] = false;
+  }
+
+  while (this.pos < this.source.length) {
+    this.skipSpace();
+
+    var token = this.parseToken();
+    if (token.type == 'integer') {
+      rv.keyCode = token.value;
+
+    } else if (token.type == 'identifier') {
+      if (token.value in hterm.Parser.identifiers.modifierKeys) {
+        var mod = hterm.Parser.identifiers.modifierKeys[token.value];
+        if (rv[mod] && rv[mod] != '*')
+          throw this.error('Duplicate modifier: ' + token.value);
+        rv[mod] = true;
+
+      } else if (token.value in hterm.Parser.identifiers.keyCodes) {
+        rv.keyCode = hterm.Parser.identifiers.keyCodes[token.value];
+
+      } else {
+        throw this.error('Unknown key: ' + token.value);
+      }
+
+    } else if (token.type == 'symbol') {
+      if (token.value == '*') {
+        for (var id in hterm.Parser.identifiers.modifierKeys) {
+          var p = hterm.Parser.identifiers.modifierKeys[id];
+          if (!rv[p])
+            rv[p] =  '*';
+        }
+      } else {
+        throw this.error('Unexpected symbol: ' + token.value);
+      }
+    } else {
+      throw this.error('Expected integer or identifier');
+    }
+
+    this.skipSpace();
+
+    if (this.ch != '-')
+      break;
+
+    if (rv.keyCode != null)
+      throw this.error('Extra definition after target key');
+
+    this.advance(1);
+  }
+
+  if (rv.keyCode == null)
+    throw this.error('Missing target key');
+
+  return rv;
+};
+
+hterm.Parser.prototype.parseKeyAction = function() {
+  this.skipSpace();
+
+  var token = this.parseToken();
+
+  if (token.type == 'string')
+    return token.value;
+
+  if (token.type == 'identifier') {
+    if (token.value in hterm.Parser.identifiers.actions)
+      return hterm.Parser.identifiers.actions[token.value];
+
+    throw this.error('Unknown key action: ' + token.value);
+  }
+
+  throw this.error('Expected string or identifier');
+
+};
+
+hterm.Parser.prototype.peekString = function() {
+  return this.ch == '\'' || this.ch == '"';
+};
+
+hterm.Parser.prototype.peekIdentifier = function() {
+  return this.ch.match(/[a-z_]/i);
+};
+
+hterm.Parser.prototype.peekInteger = function() {
+  return this.ch.match(/[0-9]/);
+};
+
+hterm.Parser.prototype.parseToken = function() {
+  if (this.ch == '*') {
+    var rv = {type: 'symbol', value: this.ch};
+    this.advance(1);
+    return rv;
+  }
+
+  if (this.peekIdentifier())
+    return {type: 'identifier', value: this.parseIdentifier()};
+
+  if (this.peekString())
+    return {type: 'string', value: this.parseString()};
+
+  if (this.peekInteger())
+    return {type: 'integer', value: this.parseInteger()};
+
+
+  throw this.error('Unexpected token');
+};
+
+hterm.Parser.prototype.parseIdentifier = function() {
+  if (!this.peekIdentifier())
+    throw this.error('Expected identifier');
+
+  return this.parsePattern(/[a-z0-9_]+/ig);
+};
+
+hterm.Parser.prototype.parseInteger = function() {
+  var base = 10;
+
+  if (this.ch == '0' && this.pos < this.source.length - 1 &&
+      this.source.substr(this.pos + 1, 1) == 'x') {
+    return parseInt(this.parsePattern(/0x[0-9a-f]+/gi));
+  }
+
+  return parseInt(this.parsePattern(/\d+/g));
+};
+
+/**
+ * Parse a single or double quoted string.
+ *
+ * The current position should point at the initial quote character.  Single
+ * quoted strings will be treated literally, double quoted will process escapes.
+ *
+ * TODO(rginda): Variable interpolation.
+ *
+ * @param {ParseState} parseState
+ * @param {string} quote A single or double-quote character.
+ * @return {string}
+ */
+hterm.Parser.prototype.parseString = function() {
+  var result = '';
+
+  var quote = this.ch;
+  if (quote != '"' && quote != '\'')
+    throw this.error('String expected');
+
+  this.advance(1);
+
+  var re = new RegExp('[\\\\' + quote + ']', 'g');
+
+  while (this.pos < this.source.length) {
+    re.lastIndex = this.pos;
+    if (!re.exec(this.source))
+      throw this.error('Unterminated string literal');
+
+    result += this.source.substring(this.pos, re.lastIndex - 1);
+
+    this.advance(re.lastIndex - this.pos - 1);
+
+    if (quote == '"' && this.ch == '\\') {
+      this.advance(1);
+      result += this.parseEscape();
+      continue;
+    }
+
+    if (quote == '\'' && this.ch == '\\') {
+      result += this.ch;
+      this.advance(1);
+      continue;
+    }
+
+    if (this.ch == quote) {
+      this.advance(1);
+      return result;
+    }
+  }
+
+  throw this.error('Unterminated string literal');
+};
+
+
+/**
+ * Parse an escape code from the current position (which should point to
+ * the first character AFTER the leading backslash.)
+ *
+ * @return {string}
+ */
+hterm.Parser.prototype.parseEscape = function() {
+  var map = {
+    '"': '"',
+    '\'': '\'',
+    '\\': '\\',
+    'a': '\x07',
+    'b': '\x08',
+    'e': '\x1b',
+    'f': '\x0c',
+    'n': '\x0a',
+    'r': '\x0d',
+    't': '\x09',
+    'v': '\x0b',
+    'x': function() {
+      var value = this.parsePattern(/[a-z0-9]{2}/ig);
+      return String.fromCharCode(parseInt(value, 16));
+    },
+    'u': function() {
+      var value = this.parsePattern(/[a-z0-9]{4}/ig);
+      return String.fromCharCode(parseInt(value, 16));
+    }
+  };
+
+  if (!(this.ch in map))
+    throw this.error('Unknown escape: ' + this.ch);
+
+  var value = map[this.ch];
+  this.advance(1);
+
+  if (typeof value == 'function')
+    value = value.call(this);
+
+  return value;
+};
+
+/**
+ * Parse the given pattern starting from the current position.
+ *
+ * @param {RegExp} pattern A pattern representing the characters to span.  MUST
+ *   include the "global" RegExp flag.
+ * @return {string}
+ */
+hterm.Parser.prototype.parsePattern = function(pattern) {
+  if (!pattern.global)
+    throw this.error('Internal error: Span patterns must be global');
+
+  pattern.lastIndex = this.pos;
+  var ary = pattern.exec(this.source);
+
+  if (!ary || pattern.lastIndex - ary[0].length != this.pos)
+    throw this.error('Expected match for: ' + pattern);
+
+  this.pos = pattern.lastIndex - 1;
+  this.advance(1);
+
+  return ary[0];
+};
+
+
+/**
+ * Advance the current position.
+ *
+ * @param {number} count
+ */
+hterm.Parser.prototype.advance = function(count) {
+  this.pos += count;
+  this.ch = this.source.substr(this.pos, 1);
+};
+
+/**
+ * @param {string=} opt_expect A list of valid non-whitespace characters to
+ *   terminate on.
+ * @return {void}
+ */
+hterm.Parser.prototype.skipSpace = function(opt_expect) {
+  if (!/\s/.test(this.ch))
+    return;
+
+  var re = /\s+/gm;
+  re.lastIndex = this.pos;
+
+  var source = this.source;
+  if (re.exec(source))
+    this.pos = re.lastIndex;
+
+  this.ch = this.source.substr(this.pos, 1);
+
+  if (opt_expect) {
+    if (this.ch.indexOf(opt_expect) == -1) {
+      throw this.error('Expected one of ' + opt_expect + ', found: ' +
+          this.ch);
+    }
+  }
+};
+// SOURCE FILE: hterm/js/hterm_parser_identifiers.js
+// Copyright (c) 2015 The Chromium OS Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+'use strict';
+
+/**
+ * Collections of identifier for hterm.Parser.
+ */
+hterm.Parser.identifiers = {};
+
+hterm.Parser.identifiers.modifierKeys = {
+  Shift: 'shift',
+  Ctrl: 'ctrl',
+  Alt: 'alt',
+  Meta: 'meta'
+};
+
+/**
+ * Key codes useful when defining key sequences.
+ *
+ * Punctuation is mostly left out of this list because they can move around
+ * based on keyboard locale and browser.
+ *
+ * In a key sequence like "Ctrl-ESC", the ESC comes from this list of
+ * identifiers.  It is equivalent to "Ctrl-27" and "Ctrl-0x1b".
+ */
+hterm.Parser.identifiers.keyCodes = {
+  // Top row.
+  ESC: 27,
+  F1: 112,
+  F2: 113,
+  F3: 114,
+  F4: 115,
+  F5: 116,
+  F6: 117,
+  F7: 118,
+  F8: 119,
+  F9: 120,
+  F10: 121,
+  F11: 122,
+  F12: 123,
+
+  // Row two.
+  ONE: 49,
+  TWO: 50,
+  THREE: 51,
+  FOUR: 52,
+  FIVE: 53,
+  SIX: 54,
+  SEVEN: 55,
+  EIGHT: 56,
+  NINE: 57,
+  ZERO: 48,
+  BACKSPACE: 8,
+
+  // Row three.
+  TAB: 9,
+  Q: 81,
+  W: 87,
+  E: 69,
+  R: 82,
+  T: 84,
+  Y: 89,
+  U: 85,
+  I: 73,
+  O: 79,
+  P: 80,
+
+  // Row four.
+  CAPSLOCK: 20,
+  A: 65,
+  S: 83,
+  D: 68,
+  F: 70,
+  G: 71,
+  H: 72,
+  J: 74,
+  K: 75,
+  L: 76,
+  ENTER: 13,
+
+  // Row five.
+  Z: 90,
+  X: 88,
+  C: 67,
+  V: 86,
+  B: 66,
+  N: 78,
+  M: 77,
+
+  // Etc.
+  SPACE: 32,
+  PRINT_SCREEN: 42,
+  SCROLL_LOCK: 145,
+  BREAK: 19,
+  INSERT: 45,
+  HOME: 36,
+  PGUP: 33,
+  DEL: 46,
+  END: 35,
+  PGDOWN: 34,
+  UP: 38,
+  DOWN: 40,
+  RIGHT: 39,
+  LEFT: 37,
+  NUMLOCK: 144,
+
+  // Keypad
+  KP0: 96,
+  KP1: 97,
+  KP2: 98,
+  KP3: 99,
+  KP4: 100,
+  KP5: 101,
+  KP6: 102,
+  KP7: 103,
+  KP8: 104,
+  KP9: 105,
+  KP_PLUS: 107,
+  KP_MINUS: 109,
+  KP_STAR: 106,
+  KP_DIVIDE: 111,
+  KP_DECIMAL: 110,
+
+  // Chrome OS media keys
+  NAVIGATE_BACK: 166,
+  NAVIGATE_FORWARD: 167,
+  RELOAD: 168,
+  FULL_SCREEN: 183,
+  WINDOW_OVERVIEW: 182,
+  BRIGHTNESS_UP: 216,
+  BRIGHTNESS_DOWN: 217
+};
+
+/**
+ * Identifiers for use in key actions.
+ */
+hterm.Parser.identifiers.actions = {
+  /**
+   * Prevent the browser and operating system from handling the event.
+   */
+  CANCEL: hterm.Keyboard.KeyActions.CANCEL,
+
+  /**
+   * Wait for a "keypress" event, send the keypress charCode to the host.
+   */
+  DEFAULT: hterm.Keyboard.KeyActions.DEFAULT,
+
+  /**
+   * Let the browser or operating system handle the key.
+   */
+  PASS: hterm.Keyboard.KeyActions.PASS,
+
+  /**
+   * Scroll the terminal one page up.
+   */
+  scrollPageUp: function(terminal) {
+    terminal.scrollPageUp();
+    return hterm.Keyboard.KeyActions.CANCEL;
+  },
+
+  /**
+   * Scroll the terminal one page down.
+   */
+  scrollPageDown: function(terminal) {
+    terminal.scrollPageDown();
+    return hterm.Keyboard.KeyActions.CANCEL;
+  },
+
+  /**
+   * Scroll the terminal to the top.
+   */
+  scrollToTop: function(terminal) {
+    terminal.scrollEnd();
+    return hterm.Keyboard.KeyActions.CANCEL;
+  },
+
+  /**
+   * Scroll the terminal to the bottom.
+   */
+  scrollToBottom: function(terminal) {
+    terminal.scrollEnd();
+    return hterm.Keyboard.KeyActions.CANCEL;
+  },
+
+  /**
+   * Clear the terminal and scrollback buffer.
+   */
+  clearScrollback: function(terminal) {
+    terminal.wipeContents();
+    return hterm.Keyboard.KeyActions.CANCEL;
+  }
+};
 // SOURCE FILE: hterm/js/hterm_preference_manager.js
 // Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -6680,382 +7582,380 @@ hterm.PreferenceManager = function(profileId) {
                              '/hterm/profiles/' + profileId);
   var defs = hterm.PreferenceManager.defaultPreferences;
   Object.keys(defs).forEach(function(key) {
-    this.definePreference(key, defs[key]);
+    this.definePreference(key, defs[key][1]);
   }.bind(this));
 };
 
+hterm.PreferenceManager.categories = {};
+hterm.PreferenceManager.categories.Keyboard = 'Keyboard';
+hterm.PreferenceManager.categories.Appearance = 'Appearance';
+hterm.PreferenceManager.categories.CopyPaste = 'CopyPaste';
+hterm.PreferenceManager.categories.Sounds = 'Sounds';
+hterm.PreferenceManager.categories.Scrolling = 'Scrolling';
+hterm.PreferenceManager.categories.Encoding = 'Encoding';
+hterm.PreferenceManager.categories.Miscellaneous = 'Miscellaneous';
+
+/**
+ * List of categories, ordered by display order (top to bottom)
+ */
+hterm.PreferenceManager.categoryDefinitions = [
+  { id: hterm.PreferenceManager.categories.Appearance,
+    text: 'Appearance (fonts, colors, images)'},
+  { id: hterm.PreferenceManager.categories.CopyPaste,
+    text: 'Copy & Paste'},
+  { id: hterm.PreferenceManager.categories.Encoding,
+    text: 'Encoding'},
+  { id: hterm.PreferenceManager.categories.Keyboard,
+    text: 'Keyboard'},
+  { id: hterm.PreferenceManager.categories.Scrolling,
+    text: 'Scrolling'},
+  { id: hterm.PreferenceManager.categories.Sounds,
+    text: 'Sounds'},
+  { id: hterm.PreferenceManager.categories.Miscellaneous,
+    text: 'Misc.'}
+];
+
+
 hterm.PreferenceManager.defaultPreferences = {
-  /**
-   * Select an AltGr detection hack^Wheuristic.
-   *
-   * null: Autodetect based on navigator.language:
-   *       'en-us' => 'none', else => 'right-alt'
-   * 'none': Disable any AltGr related munging.
-   * 'ctrl-alt': Assume Ctrl+Alt means AltGr.
-   * 'left-alt': Assume left Alt means AltGr.
-   * 'right-alt': Assume right Alt means AltGr.
-   */
-  'alt-gr-mode': null,
+  'alt-gr-mode':
+  [hterm.PreferenceManager.categories.Keyboard, null,
+   [null, 'none', 'ctrl-alt', 'left-alt', 'right-alt'],
+   'Select an AltGr detection hack^Wheuristic.\n' +
+   '\n' +
+   '\'null\': Autodetect based on navigator.language:\n' +
+   '      \'en-us\' => \'none\', else => \'right-alt\'\n' +
+   '\'none\': Disable any AltGr related munging.\n' +
+   '\'ctrl-alt\': Assume Ctrl+Alt means AltGr.\n' +
+   '\'left-alt\': Assume left Alt means AltGr.\n' +
+   '\'right-alt\': Assume right Alt means AltGr.\n'],
 
-  /**
-   * If set, undoes the Chrome OS Alt-Backspace->DEL remap, so that
-   * alt-backspace indeed is alt-backspace.
-   */
-  'alt-backspace-is-meta-backspace': false,
+  'alt-backspace-is-meta-backspace':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'If set, undoes the Chrome OS Alt-Backspace->DEL remap, so that ' +
+   'alt-backspace indeed is alt-backspace.'],
 
-  /**
-   * Set whether the alt key acts as a meta key or as a distinct alt key.
-   */
-  'alt-is-meta': false,
+  'alt-is-meta':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'Set whether the alt key acts as a meta key or as a distinct alt key.'],
 
-  /**
-   * Controls how the alt key is handled.
-   *
-   *  escape....... Send an ESC prefix.
-   *  8-bit........ Add 128 to the unshifted character as in xterm.
-   *  browser-key.. Wait for the keypress event and see what the browser says.
-   *                (This won't work well on platforms where the browser
-   *                 performs a default action for some alt sequences.)
-   */
-  'alt-sends-what': 'escape',
+  'alt-sends-what':
+  [hterm.PreferenceManager.categories.Keyboard, 'escape',
+   ['escape', '8-bit', 'browser-key'],
+   'Controls how the alt key is handled.\n' +
+   '\n' +
+   '  escape....... Send an ESC prefix.\n' +
+   '  8-bit........ Add 128 to the unshifted character as in xterm.\n' +
+   '  browser-key.. Wait for the keypress event and see what the browser \n' +
+   '                says.  (This won\'t work well on platforms where the \n' +
+   '                browser performs a default action for some alt sequences.)'
+  ],
 
-  /**
-   * Terminal bell sound.  Empty string for no audible bell.
-   */
-  'audible-bell-sound': 'lib-resource:hterm/audio/bell',
+  'audible-bell-sound':
+  [hterm.PreferenceManager.categories.Sounds, 'lib-resource:hterm/audio/bell',
+   'url',
+   'URL of the terminal bell sound.  Empty string for no audible bell.'],
 
-  /**
-   * If true, terminal bells in the background will create a Web
-   * Notification. http://www.w3.org/TR/notifications/
-   *
-   * Displaying notifications requires permission from the user. When this
-   * option is set to true, hterm will attempt to ask the user for permission
-   * if necessary. Note browsers may not show this permission request if it
-   * did not originate from a user action.
-   *
-   * Chrome extensions with the "notfications" permission have permission to
-   * display notifications.
-   */
-  'desktop-notification-bell': false,
+  'desktop-notification-bell':
+  [hterm.PreferenceManager.categories.Sounds, false, 'bool',
+   'If true, terminal bells in the background will create a Web ' +
+   'Notification. http://www.w3.org/TR/notifications/\n' +
+   '\n'+
+   'Displaying notifications requires permission from the user. When this ' +
+   'option is set to true, hterm will attempt to ask the user for permission ' +
+   'if necessary. Note browsers may not show this permission request if it ' +
+   'did not originate from a user action.\n' +
+   '\n' +
+   'Chrome extensions with the "notifications" permission have permission to ' +
+   'display notifications.'],
 
-  /**
-   * The background color for text with no other color attributes.
-   */
-  'background-color': 'rgb(16, 16, 16)',
+  'background-color':
+  [hterm.PreferenceManager.categories.Appearance, 'rgb(16, 16, 16)', 'color',
+   'The background color for text with no other color attributes.'],
 
-  /**
-   * The background image.
-   */
-  'background-image': '',
+  'background-image':
+  [hterm.PreferenceManager.categories.Appearance, '', 'string',
+   'CSS value of the background image.  Empty string for no image.\n' +
+   '\n' +
+   'For example:\n' +
+   '  url(https://goo.gl/anedTK)\n' +
+   '  linear-gradient(top bottom, blue, red)'],
 
-  /**
-   * The background image size,
-   *
-   * Defaults to none.
-   */
-  'background-size': '',
+  'background-size':
+  [hterm.PreferenceManager.categories.Appearance, '', 'string',
+   'CSS value of the background image size.  Defaults to none.'],
 
-  /**
-   * The background image position,
-   *
-   * Defaults to none.
-   */
-  'background-position': '',
+  'background-position':
+  [hterm.PreferenceManager.categories.Appearance, '', 'string',
+   'CSS value of the background image position.\n' +
+   '\n' +
+   'For example:\n' +
+   '  10% 10%\n' +
+   '  center'],
 
-  /**
-   * If true, the backspace should send BS ('\x08', aka ^H).  Otherwise
-   * the backspace key should send '\x7f'.
-   */
-  'backspace-sends-backspace': false,
+  'backspace-sends-backspace':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'If true, the backspace should send BS (\'\\x08\', aka ^H).  Otherwise ' +
+   'the backspace key should send \'\\x7f\'.'],
 
-  /**
-   * Character map overrides.
-   *
-   * This is specified as an object. It is a sparse array, where each property
-   * is the character set code and the value is an object that is a sparse array
-   * itself. In that sparse array, each property is the received character and
-   * the value is the displayed character.
-   *
-   * For example:
-   *   {"0":{"+":"\u2192",",":"\u2190","-":"\u2191",".":"\u2193","0":"\u2588"}}
-   */
-  'character-map-overrides': null,
+  'character-map-overrides':
+  [hterm.PreferenceManager.categories.Appearance, null, 'value',
+    'This is specified as an object. It is a sparse array, where each '  +
+    'property is the character set code and the value is an object that is ' +
+    'a sparse array itself. In that sparse array, each property is the ' +
+    'received character and the value is the displayed character.\n' +
+    '\n' +
+    'For example:\n' +
+    '  {"0":{"+":"\\u2192",",":"\\u2190","-":"\\u2191",".":"\\u2193", ' +
+    '"0":"\\u2588"}}'
+  ],
 
-  /**
-   * Whether or not to close the window when the command exits.
-   */
-  'close-on-exit': true,
+  'close-on-exit':
+  [hterm.PreferenceManager.categories.Miscellaneous, true, 'bool',
+   'Whether or not to close the window when the command exits.'],
 
-  /**
-   * Whether or not to blink the cursor by default.
-   */
-  'cursor-blink': false,
+  'cursor-blink':
+  [hterm.PreferenceManager.categories.Appearance, false, 'bool',
+   'Whether or not to blink the cursor by default.'],
 
-  /**
-   * The cursor blink rate in milliseconds.
-   *
-   * A two element array, the first of which is how long the cursor should be
-   * on, second is how long it should be off.
-   */
-  'cursor-blink-cycle': [1000, 500],
+  'cursor-blink-cycle':
+  [hterm.PreferenceManager.categories.Appearance, [1000, 500], 'value',
+   'The cursor blink rate in milliseconds.\n' +
+   '\n' +
+   'A two element array, the first of which is how long the cursor should be ' +
+   'on, second is how long it should be off.'],
 
-  /**
-   * The color of the visible cursor.
-   */
-  'cursor-color': 'rgba(255, 0, 0, 0.5)',
+  'cursor-color':
+  [hterm.PreferenceManager.categories.Appearance, 'rgba(255, 0, 0, 0.5)',
+   'color',
+   'The color of the visible cursor.'],
 
-  /**
-   * Override colors in the default palette.
-   *
-   * This can be specified as an array or an object.  If specified as an
-   * object it is assumed to be a sparse array, where each property
-   * is a numeric index into the color palette.
-   *
-   * Values can be specified as css almost any css color value.  This
-   * includes #RGB, #RRGGBB, rgb(...), rgba(...), and any color names
-   * that are also part of the stock X11 rgb.txt file.
-   *
-   * You can use 'null' to specify that the default value should be not
-   * be changed.  This is useful for skipping a small number of indicies
-   * when the value is specified as an array.
-   */
-  'color-palette-overrides': null,
+  'color-palette-overrides':
+  [hterm.PreferenceManager.categories.Appearance, null, 'value',
+   'Override colors in the default palette.\n' +
+   '\n' +
+   'This can be specified as an array or an object.  If specified as an ' +
+   'object it is assumed to be a sparse array, where each property ' +
+   'is a numeric index into the color palette.\n' +
+   '\n' +
+   'Values can be specified as almost any css color value.  This ' +
+   'includes #RGB, #RRGGBB, rgb(...), rgba(...), and any color names ' +
+   'that are also part of the stock X11 rgb.txt file.\n' +
+   '\n' +
+   'You can use \'null\' to specify that the default value should be not ' +
+   'be changed.  This is useful for skipping a small number of indicies ' +
+   'when the value is specified as an array.'],
 
-  /**
-   * Automatically copy mouse selection to the clipboard.
-   */
-  'copy-on-select': true,
+  'copy-on-select':
+  [hterm.PreferenceManager.categories.CopyPaste, true, 'bool',
+   'Automatically copy mouse selection to the clipboard.'],
 
-  /**
-   * Whether to use the default window copy behaviour.
-   */
-  'use-default-window-copy': false,
+  'use-default-window-copy':
+  [hterm.PreferenceManager.categories.CopyPaste, false, 'bool',
+   'Whether to use the default window copy behaviour'],
 
-  /**
-   * Whether to clear the selection after copying.
-   */
-  'clear-selection-after-copy': true,
+  'clear-selection-after-copy':
+  [hterm.PreferenceManager.categories.CopyPaste, true, 'bool',
+   'Whether to clear the selection after copying.'],
 
-  /**
-   * If true, Ctrl-Plus/Minus/Zero controls zoom.
-   * If false, Ctrl-Shift-Plus/Minus/Zero controls zoom, Ctrl-Minus sends ^_,
-   * Ctrl-Plus/Zero do nothing.
-   */
-  'ctrl-plus-minus-zero-zoom': true,
+  'ctrl-plus-minus-zero-zoom':
+  [hterm.PreferenceManager.categories.Keyboard, true, 'bool',
+   'If true, Ctrl-Plus/Minus/Zero controls zoom.\n' +
+   'If false, Ctrl-Shift-Plus/Minus/Zero controls zoom, Ctrl-Minus sends ^_, ' +
+   'Ctrl-Plus/Zero do nothing.'],
 
-  /**
-   * Ctrl+C copies if true, send ^C to host if false.
-   * Ctrl+Shift+C sends ^C to host if true, copies if false.
-   */
-  'ctrl-c-copy': false,
+  'ctrl-c-copy':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'Ctrl+C copies if true, send ^C to host if false.\n' +
+   'Ctrl+Shift+C sends ^C to host if true, copies if false.'],
 
-  /**
-   * Ctrl+V pastes if true, send ^V to host if false.
-   * Ctrl+Shift+V sends ^V to host if true, pastes if false.
-   */
-  'ctrl-v-paste': false,
+  'ctrl-v-paste':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'Ctrl+V pastes if true, send ^V to host if false.\n' +
+   'Ctrl+Shift+V sends ^V to host if true, pastes if false.'],
 
-  /**
-   * Set whether East Asian Ambiguous characters have two column width.
-   */
-  'east-asian-ambiguous-as-two-column': false,
+  'east-asian-ambiguous-as-two-column':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'Set whether East Asian Ambiguous characters have two column width.'],
 
-  /**
-   * True to enable 8-bit control characters, false to ignore them.
-   *
-   * We'll respect the two-byte versions of these control characters
-   * regardless of this setting.
-   */
-  'enable-8-bit-control': false,
+  'enable-8-bit-control':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'True to enable 8-bit control characters, false to ignore them.\n' +
+   '\n' +
+   'We\'ll respect the two-byte versions of these control characters ' +
+   'regardless of this setting.'],
 
-  /**
-   * True if we should use bold weight font for text with the bold/bright
-   * attribute.  False to use the normal weight font.  Null to autodetect.
-   */
-  'enable-bold': null,
+  'enable-bold':
+  [hterm.PreferenceManager.categories.Appearance, null, 'tristate',
+   'True if we should use bold weight font for text with the bold/bright ' +
+   'attribute.  False to use the normal weight font.  Null to autodetect.'],
 
-  /**
-   * True if we should use bright colors (8-15 on a 16 color palette)
-   * for any text with the bold attribute.  False otherwise.
-   */
-  'enable-bold-as-bright': true,
+  'enable-bold-as-bright':
+  [hterm.PreferenceManager.categories.Appearance, true, 'bool',
+   'True if we should use bright colors (8-15 on a 16 color palette) ' +
+   'for any text with the bold attribute.  False otherwise.'],
 
-  /**
-   * Allow the host to write directly to the system clipboard.
-   */
-  'enable-clipboard-notice': true,
+  'enable-clipboard-notice':
+  [hterm.PreferenceManager.categories.CopyPaste, true, 'bool',
+   'Show a message in the terminal when the host writes to the clipboard.'],
 
-  /**
-   * Allow the host to write directly to the system clipboard.
-   */
-  'enable-clipboard-write': true,
+  'enable-clipboard-write':
+  [hterm.PreferenceManager.categories.CopyPaste, true, 'bool',
+   'Allow the host to write directly to the system clipboard.'],
 
-  /**
-   * Respect the host's attempt to change the cursor blink status using
-   * DEC Private Mode 12.
-   */
-  'enable-dec12': false,
+  'enable-dec12':
+  [hterm.PreferenceManager.categories.Miscellaneous, false, 'bool',
+   'Respect the host\'s attempt to change the cursor blink status using ' +
+   'DEC Private Mode 12.'],
 
-  /**
-   * The default environment variables.
-   */
-  'environment': {'TERM': 'xterm-256color'},
+  'environment':
+  [hterm.PreferenceManager.categories.Miscellaneous, {'TERM': 'xterm-256color'},
+   'value',
+   'The default environment variables, as an object.'],
 
-  /**
-   * Default font family for the terminal text.
-   */
-  'font-family': ('"DejaVu Sans Mono", "Everson Mono", ' +
-                  'FreeMono, "Menlo", "Terminal", ' +
-                  'monospace'),
+  'font-family':
+  [hterm.PreferenceManager.categories.Appearance,
+   '"DejaVu Sans Mono", "Everson Mono", FreeMono, "Menlo", "Terminal", ' +
+   'monospace', 'string',
+   'Default font family for the terminal text.'],
 
-  /**
-   * The default font size in pixels.
-   */
-  'font-size': 15,
+  'font-size':
+  [hterm.PreferenceManager.categories.Appearance, 15, 'int',
+   'The default font size in pixels.'],
 
-  /**
-   * Anti-aliasing.
-   */
-  'font-smoothing': 'antialiased',
+  'font-smoothing':
+  [hterm.PreferenceManager.categories.Appearance, 'antialiased', 'string',
+   'CSS font-smoothing property.'],
 
-  /**
-   * The foreground color for text with no other color attributes.
-   */
-  'foreground-color': 'rgb(240, 240, 240)',
+  'foreground-color':
+  [hterm.PreferenceManager.categories.Appearance, 'rgb(240, 240, 240)', 'color',
+   'The foreground color for text with no other color attributes.'],
 
-  /**
-   * If true, home/end will control the terminal scrollbar and shift home/end
-   * will send the VT keycodes.  If false then home/end sends VT codes and
-   * shift home/end scrolls.
-   */
-  'home-keys-scroll': false,
+  'home-keys-scroll':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'If true, home/end will control the terminal scrollbar and shift home/end ' +
+   'will send the VT keycodes.  If false then home/end sends VT codes and ' +
+   'shift home/end scrolls.'],
 
-  /**
-   * Max length of a DCS, OSC, PM, or APS sequence before we give up and
-   * ignore the code.
-   */
-  'max-string-sequence': 100000,
+  'keybindings':
+  [hterm.PreferenceManager.categories.Keyboard, null, 'value',
+   'A map of key sequence to key actions.  Key sequences include zero or ' +
+   'more modifier keys followed by a key code.  Key codes can be decimal or ' +
+   'hexadecimal numbers, or a key identifier.  Key actions can be specified ' +
+   'a string to send to the host, or an action identifier.  For a full ' +
+   'list of key code and action identifiers, see https://goo.gl/8AoD09.' +
+   '\n' +
+   '\n' +
+   'Sample keybindings:\n' +
+   '{ "Ctrl-Alt-K": "clearScrollback",\n' +
+   '  "Ctrl-Shift-L": "PASS",\n' +
+   '  "Ctrl-H": "\'HELLO\\n\'"\n' +
+   '}'],
 
-  /**
-   * If true, convert media keys to their Fkey equivalent. If false, let
-   * Chrome handle the keys.
-   */
-  'media-keys-are-fkeys': false,
+  'max-string-sequence':
+  [hterm.PreferenceManager.categories.Encoding, 100000, 'int',
+   'Max length of a DCS, OSC, PM, or APS sequence before we give up and ' +
+   'ignore the code.'],
 
-  /**
-   * Set whether the meta key sends a leading escape or not.
-   */
-  'meta-sends-escape': true,
+  'media-keys-are-fkeys':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'If true, convert media keys to their Fkey equivalent. If false, let ' +
+   'the browser handle the keys.'],
 
-  /**
-   * Mouse paste button, or null to autodetect.
-   *
-   * For autodetect, we'll try to enable middle button paste for non-X11
-   * platforms.
-   *
-   * On X11 we move it to button 3, but that'll probably be a context menu
-   * in the future.
-   */
-  'mouse-paste-button': null,
+  'meta-sends-escape':
+  [hterm.PreferenceManager.categories.Keyboard, true, 'bool',
+   'Set whether the meta key sends a leading escape or not.'],
 
-  /**
-   * If true, page up/down will control the terminal scrollbar and shift
-   * page up/down will send the VT keycodes.  If false then page up/down
-   * sends VT codes and shift page up/down scrolls.
-   */
-  'page-keys-scroll': false,
+  'mouse-paste-button':
+  [hterm.PreferenceManager.categories.CopyPaste, null,
+   [null, 0, 1, 2, 3, 4, 5, 6],
+   'Mouse paste button, or null to autodetect.\n' +
+   '\n' +
+   'For autodetect, we\'ll try to enable middle button paste for non-X11 ' +
+   'platforms.  On X11 we move it to button 3.'],
 
-  /**
-   * Set whether we should pass Alt-1..9 to the browser.
-   *
-   * This is handy when running hterm in a browser tab, so that you don't lose
-   * Chrome's "switch to tab" keyboard accelerators.  When not running in a
-   * tab it's better to send these keys to the host so they can be used in
-   * vim or emacs.
-   *
-   * If true, Alt-1..9 will be handled by the browser.  If false, Alt-1..9
-   * will be sent to the host.  If null, autodetect based on browser platform
-   * and window type.
-   */
-  'pass-alt-number': null,
+  'page-keys-scroll':
+  [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
+   'If true, page up/down will control the terminal scrollbar and shift ' +
+   'page up/down will send the VT keycodes.  If false then page up/down ' +
+   'sends VT codes and shift page up/down scrolls.'],
 
-  /**
-   * Set whether we should pass Ctrl-1..9 to the browser.
-   *
-   * This is handy when running hterm in a browser tab, so that you don't lose
-   * Chrome's "switch to tab" keyboard accelerators.  When not running in a
-   * tab it's better to send these keys to the host so they can be used in
-   * vim or emacs.
-   *
-   * If true, Ctrl-1..9 will be handled by the browser.  If false, Ctrl-1..9
-   * will be sent to the host.  If null, autodetect based on browser platform
-   * and window type.
-   */
-  'pass-ctrl-number': null,
+  'pass-alt-number':
+  [hterm.PreferenceManager.categories.Keyboard, null, 'tristate',
+   'Set whether we should pass Alt-1..9 to the browser.\n' +
+   '\n' +
+   'This is handy when running hterm in a browser tab, so that you don\'t ' +
+   'lose Chrome\'s "switch to tab" keyboard accelerators.  When not running ' +
+   'in a tab it\'s better to send these keys to the host so they can be ' +
+   'used in vim or emacs.\n' +
+   '\n' +
+   'If true, Alt-1..9 will be handled by the browser.  If false, Alt-1..9 ' +
+   'will be sent to the host.  If null, autodetect based on browser platform ' +
+   'and window type.'],
 
-  /**
-   * Set whether we should pass Meta-1..9 to the browser.
-   *
-   * This is handy when running hterm in a browser tab, so that you don't lose
-   * Chrome's "switch to tab" keyboard accelerators.  When not running in a
-   * tab it's better to send these keys to the host so they can be used in
-   * vim or emacs.
-   *
-   * If true, Meta-1..9 will be handled by the browser.  If false, Meta-1..9
-   * will be sent to the host.  If null, autodetect based on browser platform
-   * and window type.
-   */
-  'pass-meta-number': null,
+  'pass-ctrl-number':
+  [hterm.PreferenceManager.categories.Keyboard, null, 'tristate',
+   'Set whether we should pass Ctrl-1..9 to the browser.\n' +
+   '\n' +
+   'This is handy when running hterm in a browser tab, so that you don\'t ' +
+   'lose Chrome\'s "switch to tab" keyboard accelerators.  When not running ' +
+   'in a tab it\'s better to send these keys to the host so they can be ' +
+   'used in vim or emacs.\n' +
+   '\n' +
+   'If true, Ctrl-1..9 will be handled by the browser.  If false, Ctrl-1..9 ' +
+   'will be sent to the host.  If null, autodetect based on browser platform ' +
+   'and window type.'],
 
-  /**
-   * Set whether meta-V gets passed to host.
-   */
-  'pass-meta-v': true,
+   'pass-meta-number':
+  [hterm.PreferenceManager.categories.Keyboard, null, 'tristate',
+   'Set whether we should pass Meta-1..9 to the browser.\n' +
+   '\n' +
+   'This is handy when running hterm in a browser tab, so that you don\'t ' +
+   'lose Chrome\'s "switch to tab" keyboard accelerators.  When not running ' +
+   'in a tab it\'s better to send these keys to the host so they can be ' +
+   'used in vim or emacs.\n' +
+   '\n' +
+   'If true, Meta-1..9 will be handled by the browser.  If false, Meta-1..9 ' +
+   'will be sent to the host.  If null, autodetect based on browser platform ' +
+   'and window type.'],
 
-  /**
-   * Set the expected encoding for data received from the host.
-   *
-   * Valid values are 'utf-8' and 'raw'.
-   */
-  'receive-encoding': 'utf-8',
+  'pass-meta-v':
+  [hterm.PreferenceManager.categories.Keyboard, true, 'bool',
+   'Set whether meta-V gets passed to host.'],
 
-  /**
-   * If true, scroll to the bottom on any keystroke.
-   */
-  'scroll-on-keystroke': true,
+  'receive-encoding':
+  [hterm.PreferenceManager.categories.Encoding, 'utf-8', ['utf-8', 'raw'],
+   'Set the expected encoding for data received from the host.\n' +
+   '\n' +
+   'Valid values are \'utf-8\' and \'raw\'.'],
 
-  /**
-   * If true, scroll to the bottom on terminal output.
-   */
-  'scroll-on-output': false,
+  'scroll-on-keystroke':
+  [hterm.PreferenceManager.categories.Scrolling, true, 'bool',
+   'If true, scroll to the bottom on any keystroke.'],
 
-  /**
-   * The vertical scrollbar mode.
-   */
-  'scrollbar-visible': true,
+  'scroll-on-output':
+  [hterm.PreferenceManager.categories.Scrolling, false, 'bool',
+   'If true, scroll to the bottom on terminal output.'],
 
-  /**
-   * The multiplier for the pixel delta in mousewheel event caused by the scroll
-   * wheel. Alters how fast the page scrolls.
-   */
-  'scroll-wheel-move-multiplier': 1,
+  'scrollbar-visible':
+  [hterm.PreferenceManager.categories.Scrolling, true, 'bool',
+   'The vertical scrollbar mode.'],
 
-  /**
-   * Set the encoding for data sent to host.
-   *
-   * Valid values are 'utf-8' and 'raw'.
-   */
-  'send-encoding': 'utf-8',
+  'scroll-wheel-move-multiplier':
+  [hterm.PreferenceManager.categories.Scrolling, 1, 'int',
+   'The multiplier for the pixel delta in mousewheel event caused by the ' +
+   'scroll wheel. Alters how fast the page scrolls.'],
 
-  /**
-   * Shift + Insert pastes if true, sent to host if false.
-   */
-  'shift-insert-paste': true,
+  'send-encoding':
+  [hterm.PreferenceManager.categories.Encoding, 'utf-8', ['utf-8', 'raw'],
+   'Set the encoding for data sent to host.'],
 
-  /**
-   * User stylesheet to include in the terminal document.
-   */
-  'user-css': ''
+  'shift-insert-paste':
+  [hterm.PreferenceManager.categories.Keyboard, true, 'bool',
+   'Shift + Insert pastes if true, sent to host if false.'],
+
+  'user-css':
+  [hterm.PreferenceManager.categories.Appearance, '', 'url',
+   'URL of user stylesheet to include in the terminal document.']
 };
 
 hterm.PreferenceManager.prototype = {
@@ -7298,7 +8198,7 @@ hterm.Screen.prototype.shiftRows = function(count) {
 /**
  * Insert a row at the top of the screen.
  *
- * @param {HTMLElement} The row to insert.
+ * @param {HTMLElement} row The row to insert.
  */
 hterm.Screen.prototype.unshiftRow = function(row) {
   this.rowsArray.splice(0, 0, row);
@@ -7307,7 +8207,7 @@ hterm.Screen.prototype.unshiftRow = function(row) {
 /**
  * Insert rows at the top of the screen.
  *
- * @param {Array.<HTMLElement>} The rows to insert.
+ * @param {Array.<HTMLElement>} rows The rows to insert.
  */
 hterm.Screen.prototype.unshiftRows = function(rows) {
   this.rowsArray.unshift.apply(this.rowsArray, rows);
@@ -7335,7 +8235,7 @@ hterm.Screen.prototype.popRows = function(count) {
 /**
  * Insert a row at the bottom of the screen.
  *
- * @param {HTMLElement} The row to insert.
+ * @param {HTMLElement} row The row to insert.
  */
 hterm.Screen.prototype.pushRow = function(row) {
   this.rowsArray.push(row);
@@ -7344,25 +8244,27 @@ hterm.Screen.prototype.pushRow = function(row) {
 /**
  * Insert rows at the bottom of the screen.
  *
- * @param {Array.<HTMLElement>} The rows to insert.
+ * @param {Array.<HTMLElement>} rows The rows to insert.
  */
 hterm.Screen.prototype.pushRows = function(rows) {
   rows.push.apply(this.rowsArray, rows);
 };
 
 /**
- * Insert a row at the specified column of the screen.
+ * Insert a row at the specified row of the screen.
  *
- * @param {HTMLElement} The row to insert.
+ * @param {integer} index The index to insert the row.
+ * @param {HTMLElement} row The row to insert.
  */
 hterm.Screen.prototype.insertRow = function(index, row) {
   this.rowsArray.splice(index, 0, row);
 };
 
 /**
- * Insert rows at the specified column of the screen.
+ * Insert rows at the specified row of the screen.
  *
- * @param {Array.<HTMLElement>} The rows to insert.
+ * @param {integer} index The index to insert the rows.
+ * @param {Array.<HTMLElement>} rows The rows to insert.
  */
 hterm.Screen.prototype.insertRows = function(index, rows) {
   for (var i = 0; i < rows.length; i++) {
@@ -7371,8 +8273,9 @@ hterm.Screen.prototype.insertRows = function(index, rows) {
 };
 
 /**
- * Remove a last row from the specified column of the screen and return it.
+ * Remove a row from the screen and return it.
  *
+ * @param {integer} index The index of the row to remove.
  * @return {HTMLElement} The selected row.
  */
 hterm.Screen.prototype.removeRow = function(index) {
@@ -7382,6 +8285,7 @@ hterm.Screen.prototype.removeRow = function(index) {
 /**
  * Remove rows from the bottom of the screen and return them as an array.
  *
+ * @param {integer} index The index to start removing rows.
  * @param {integer} count The number of rows to remove.
  * @return {Array.<HTMLElement>} The selected rows.
  */
@@ -8358,6 +9262,7 @@ hterm.ScrollPort.prototype.decorate = function(div) {
       'height: 100%;' +
       'width: 100%;' +
       'overflow: hidden;' +
+      'cursor: text;' +
       '-webkit-user-select: none;' +
       '-moz-user-select: none;');
 
@@ -8381,6 +9286,7 @@ hterm.ScrollPort.prototype.decorate = function(div) {
       'display: block;' +
       'font-family: monospace;' +
       'font-size: 15px;' +
+      'font-variant-ligatures: none;' +
       'height: 100%;' +
       'overflow-y: scroll; overflow-x: hidden;' +
       'white-space: pre;' +
@@ -8679,6 +9585,13 @@ hterm.ScrollPort.prototype.getFontSize = function() {
  * @return {hterm.Size} A new hterm.Size object.
  */
 hterm.ScrollPort.prototype.measureCharacterSize = function(opt_weight) {
+  // Number of lines used to average the height of a single character.
+  var numberOfLines = 100;
+  var rulerSingleLineContents = ('XXXXXXXXXXXXXXXXXXXX' +
+                                 'XXXXXXXXXXXXXXXXXXXX' +
+                                 'XXXXXXXXXXXXXXXXXXXX' +
+                                 'XXXXXXXXXXXXXXXXXXXX' +
+                                 'XXXXXXXXXXXXXXXXXXXX');
   if (!this.ruler_) {
     this.ruler_ = this.document_.createElement('div');
     this.ruler_.style.cssText = (
@@ -8692,11 +9605,11 @@ hterm.ScrollPort.prototype.measureCharacterSize = function(opt_weight) {
     // We need to put the text in a span to make the size calculation
     // work properly in Firefox
     this.rulerSpan_ = this.document_.createElement('span');
-    this.rulerSpan_.textContent = ('XXXXXXXXXXXXXXXXXXXX' +
-                                   'XXXXXXXXXXXXXXXXXXXX' +
-                                   'XXXXXXXXXXXXXXXXXXXX' +
-                                   'XXXXXXXXXXXXXXXXXXXX' +
-                                   'XXXXXXXXXXXXXXXXXXXX');
+    var rulerContents = '' + rulerSingleLineContents;
+    for (var i = 0; i < numberOfLines - 1; ++i)
+      rulerContents += String.fromCharCode(13) + rulerSingleLineContents;
+
+    this.rulerSpan_.innerHTML = rulerContents;
     this.ruler_.appendChild(this.rulerSpan_);
 
     this.rulerBaseline_ = this.document_.createElement('span');
@@ -8710,8 +9623,8 @@ hterm.ScrollPort.prototype.measureCharacterSize = function(opt_weight) {
   this.rowNodes_.appendChild(this.ruler_);
   var rulerSize = hterm.getClientSize(this.rulerSpan_);
 
-  var size = new hterm.Size(rulerSize.width / this.ruler_.textContent.length,
-                            rulerSize.height);
+  var size = new hterm.Size(rulerSize.width / rulerSingleLineContents.length,
+                            rulerSize.height / numberOfLines);
 
   this.ruler_.appendChild(this.rulerBaseline_);
   size.baseline = this.rulerBaseline_.offsetTop;
@@ -9244,8 +10157,7 @@ hterm.ScrollPort.prototype.scrollRowToBottom = function(rowIndex) {
  * returns the row that *should* be at the top.
  */
 hterm.ScrollPort.prototype.getTopRowIndex = function() {
-  return lib.f.smartFloorDivide(
-      this.screen_.scrollTop, this.characterSize.height);
+  return Math.round(this.screen_.scrollTop / this.characterSize.height);
 };
 
 /**
@@ -9561,9 +10473,8 @@ hterm.Terminal = function(opt_profileId) {
   this.scrollOnOutput_ = null;
   this.scrollOnKeystroke_ = null;
 
-  // True if we should send mouse events to the vt, false if we want them
-  // to manage the local text selection.
-  this.reportMouseEvents_ = false;
+  // True if we should override mouse event reporting to allow local selection.
+  this.defeatMouseReports_ = false;
 
   // Terminal bell sound.
   this.bellAudio_ = this.document_.createElement('audio');
@@ -9610,7 +10521,7 @@ hterm.Terminal = function(opt_profileId) {
   this.setDefaultTabStops();
 
   this.setProfile(opt_profileId || 'default',
-                  function() { this.onTerminalReady() }.bind(this));
+                  function() { this.onTerminalReady(); }.bind(this));
 };
 
 /**
@@ -9642,7 +10553,7 @@ hterm.Terminal.prototype.tabWidth = 8;
  * This will load the terminal preferences for the given profile name and
  * associate subsequent preference changes with the new preference profile.
  *
- * @param {string} newName The name of the preference profile.  Forward slash
+ * @param {string} profileId The name of the preference profile.  Forward slash
  *     characters will be removed from the name.
  * @param {function} opt_callback Optional callback to invoke when the profile
  *     transition is complete.
@@ -9802,7 +10713,7 @@ hterm.Terminal.prototype.setProfile = function(profileId, opt_callback) {
         }
       }
 
-      terminal.primaryScreen_.textAttributes.resetColorPalette()
+      terminal.primaryScreen_.textAttributes.resetColorPalette();
       terminal.alternateScreen_.textAttributes.resetColorPalette();
     },
 
@@ -9874,6 +10785,24 @@ hterm.Terminal.prototype.setProfile = function(profileId, opt_callback) {
 
     'home-keys-scroll': function(v) {
       terminal.keyboard.homeKeysScroll = v;
+    },
+
+    'keybindings': function(v) {
+      terminal.keyboard.bindings.clear();
+
+      if (!v)
+        return;
+
+      if (!(v instanceof Object)) {
+        console.error('Error in keybindings preference: Expected object');
+        return;
+      }
+
+      try {
+        terminal.keyboard.bindings.addBindings(v);
+      } catch (ex) {
+        console.error('Error in keybindings preference: ' + ex);
+      }
     },
 
     'max-string-sequence': function(v) {
@@ -9990,6 +10919,8 @@ hterm.Terminal.prototype.setProfile = function(profileId, opt_callback) {
 
 /**
  * Returns the preferences manager used for configuring this terminal.
+ *
+ * @return {hterm.PreferenceManager}
  */
 hterm.Terminal.prototype.getPrefs = function() {
   return this.prefs_;
@@ -9997,6 +10928,8 @@ hterm.Terminal.prototype.getPrefs = function() {
 
 /**
  * Enable or disable bracketed paste mode.
+ *
+ * @param {boolean} state The value to set.
  */
 hterm.Terminal.prototype.setBracketedPaste = function(state) {
   this.options_.bracketedPaste = state;
@@ -10007,6 +10940,8 @@ hterm.Terminal.prototype.setBracketedPaste = function(state) {
  *
  * If you want this setting to persist, set it through prefs_, rather than
  * with this method.
+ *
+ * @param {string} color The color to set.
  */
 hterm.Terminal.prototype.setCursorColor = function(color) {
   this.cursorColor_ = color;
@@ -10016,6 +10951,7 @@ hterm.Terminal.prototype.setCursorColor = function(color) {
 
 /**
  * Return the current cursor color as a string.
+ * @return {string}
  */
 hterm.Terminal.prototype.getCursorColor = function() {
   return this.cursorColor_;
@@ -10023,6 +10959,8 @@ hterm.Terminal.prototype.getCursorColor = function() {
 
 /**
  * Enable or disable mouse based text selection in the terminal.
+ *
+ * @param {boolean} state The value to set.
  */
 hterm.Terminal.prototype.setSelectionEnabled = function(state) {
   this.enableMouseDragScroll = state;
@@ -10033,6 +10971,8 @@ hterm.Terminal.prototype.setSelectionEnabled = function(state) {
  *
  * If you want this setting to persist, set it through prefs_, rather than
  * with this method.
+ *
+ * @param {string} color The color to set.
  */
 hterm.Terminal.prototype.setBackgroundColor = function(color) {
   this.backgroundColor_ = lib.colors.normalizeCSS(color);
@@ -10048,6 +10988,8 @@ hterm.Terminal.prototype.setBackgroundColor = function(color) {
  *
  * Intended for use by other classes, so we don't have to expose the entire
  * prefs_ object.
+ *
+ * @return {string}
  */
 hterm.Terminal.prototype.getBackgroundColor = function() {
   return this.backgroundColor_;
@@ -10058,6 +11000,8 @@ hterm.Terminal.prototype.getBackgroundColor = function() {
  *
  * If you want this setting to persist, set it through prefs_, rather than
  * with this method.
+ *
+ * @param {string} color The color to set.
  */
 hterm.Terminal.prototype.setForegroundColor = function(color) {
   this.foregroundColor_ = lib.colors.normalizeCSS(color);
@@ -10073,6 +11017,8 @@ hterm.Terminal.prototype.setForegroundColor = function(color) {
  *
  * Intended for use by other classes, so we don't have to expose the entire
  * prefs_ object.
+ *
+ * @return {string}
  */
 hterm.Terminal.prototype.getForegroundColor = function() {
   return this.foregroundColor_;
@@ -10109,6 +11055,8 @@ hterm.Terminal.prototype.runCommandClass = function(commandClass, argString) {
 
 /**
  * Returns true if the current screen is the primary screen, false otherwise.
+ *
+ * @return {boolean}
  */
 hterm.Terminal.prototype.isPrimaryScreen = function() {
   return this.screen_ == this.primaryScreen_;
@@ -10153,6 +11101,8 @@ hterm.Terminal.prototype.setFontSize = function(px) {
 
 /**
  * Get the current font size.
+ *
+ * @return {number}
  */
 hterm.Terminal.prototype.getFontSize = function() {
   return this.scrollPort_.getFontSize();
@@ -10160,6 +11110,8 @@ hterm.Terminal.prototype.getFontSize = function() {
 
 /**
  * Get the current font family.
+ *
+ * @return {string}
  */
 hterm.Terminal.prototype.getFontFamily = function() {
   return this.scrollPort_.getFontFamily();
@@ -10228,10 +11180,20 @@ hterm.Terminal.prototype.saveCursor = function() {
   return this.screen_.cursorPosition.clone();
 };
 
+/**
+ * Return the current text attributes.
+ *
+ * @return {string}
+ */
 hterm.Terminal.prototype.getTextAttributes = function() {
   return this.screen_.textAttributes;
 };
 
+/**
+ * Set the text attributes.
+ *
+ * @param {string} textAttributes The attributes to set.
+ */
 hterm.Terminal.prototype.setTextAttributes = function(textAttributes) {
   this.screen_.textAttributes = textAttributes;
 };
@@ -10247,6 +11209,8 @@ hterm.Terminal.prototype.getZoomFactor = function() {
 
 /**
  * Change the title of this terminal's window.
+ *
+ * @param {string} title The title to set.
  */
 hterm.Terminal.prototype.setWindowTitle = function(title) {
   window.document.title = title;
@@ -10276,6 +11240,8 @@ hterm.Terminal.prototype.clearCursorOverflow = function() {
 
 /**
  * Sets the cursor shape
+ *
+ * @param {string} shape The shape to set.
  */
 hterm.Terminal.prototype.setCursorShape = function(shape) {
   this.cursorShape_ = shape;
@@ -10284,6 +11250,8 @@ hterm.Terminal.prototype.setCursorShape = function(shape) {
 
 /**
  * Get the cursor shape
+ *
+ * @return {string}
  */
 hterm.Terminal.prototype.getCursorShape = function() {
   return this.cursorShape_;
@@ -10291,6 +11259,8 @@ hterm.Terminal.prototype.getCursorShape = function() {
 
 /**
  * Set the width of the terminal, resizing the UI to match.
+ *
+ * @param {number} columnCount
  */
 hterm.Terminal.prototype.setWidth = function(columnCount) {
   if (columnCount == null) {
@@ -10307,6 +11277,8 @@ hterm.Terminal.prototype.setWidth = function(columnCount) {
 
 /**
  * Set the height of the terminal, resizing the UI to match.
+ *
+ * @param {number} rowCount The height in rows.
  */
 hterm.Terminal.prototype.setHeight = function(rowCount) {
   if (rowCount == null) {
@@ -10323,6 +11295,8 @@ hterm.Terminal.prototype.setHeight = function(rowCount) {
 /**
  * Deal with terminal size changes.
  *
+ * @param {number} columnCount The number of columns.
+ * @param {number} rowCount The number of rows.
  */
 hterm.Terminal.prototype.realizeSize_ = function(columnCount, rowCount) {
   if (columnCount != this.screenSize.width)
@@ -10345,6 +11319,8 @@ hterm.Terminal.prototype.realizeSize_ = function(columnCount, rowCount) {
  *
  * Relying on the browser to send us an async resize event means we may not be
  * in the correct state yet when the next escape sequence hits.
+ *
+ * @param {number} columnCount The number of columns.
  */
 hterm.Terminal.prototype.realizeWidth_ = function(columnCount) {
   if (columnCount <= 0)
@@ -10380,6 +11356,8 @@ hterm.Terminal.prototype.realizeWidth_ = function(columnCount) {
  *
  * Relying on the browser to send us an async resize event means we may not be
  * in the correct state yet when the next escape sequence hits.
+ *
+ * @param {number} rowCount The number of rows.
  */
 hterm.Terminal.prototype.realizeHeight_ = function(rowCount) {
   if (rowCount <= 0)
@@ -10569,7 +11547,7 @@ hterm.Terminal.prototype.backwardTabStop = function() {
 /**
  * Set a tab stop at the given column.
  *
- * @param {int} column Zero based column.
+ * @param {integer} column Zero based column.
  */
 hterm.Terminal.prototype.setTabStop = function(column) {
   for (var i = this.tabStops_.length - 1; i >= 0; i--) {
@@ -10618,7 +11596,7 @@ hterm.Terminal.prototype.clearAllTabStops = function() {
  * This does not clear the existing tab stops first, use clearAllTabStops
  * for that.
  *
- * @param {int} opt_start Optional starting zero based starting column, useful
+ * @param {integer} opt_start Optional starting zero based starting column, useful
  *     for filling out missing tab stops when the terminal is resized.
  */
 hterm.Terminal.prototype.setDefaultTabStops = function(opt_start) {
@@ -10671,7 +11649,7 @@ hterm.Terminal.prototype.decorate = function(div) {
 
   this.document_ = this.scrollPort_.getDocument();
 
-  this.document_.body.oncontextmenu = function() { return false };
+  this.document_.body.oncontextmenu = function() { return false; };
 
   var onMouse = this.onMouse_.bind(this);
   var screenNode = this.scrollPort_.getScreenNode();
@@ -10743,7 +11721,6 @@ hterm.Terminal.prototype.decorate = function(div) {
        'height: 10px;');
   this.document_.body.appendChild(this.scrollBlockerNode_);
 
-  var onMouse = this.onMouse_.bind(this);
   this.scrollPort_.onScrollWheel = onMouse;
   ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick',
    ].forEach(function(event) {
@@ -10764,6 +11741,8 @@ hterm.Terminal.prototype.decorate = function(div) {
 
 /**
  * Return the HTML document that contains the terminal DOM nodes.
+ *
+ * @return {HTMLDocument}
  */
 hterm.Terminal.prototype.getDocument = function() {
   return this.document_;
@@ -10869,6 +11848,8 @@ hterm.Terminal.prototype.getRowCount = function() {
  * be using moveRows() in cases where they would matter.
  *
  * The cursor will be positioned at column 0 of the first inserted line.
+ *
+ * @param {number} count The number of rows to created.
  */
 hterm.Terminal.prototype.appendRows_ = function(count) {
   var cursorRow = this.screen_.rowsArray.length;
@@ -10903,6 +11884,10 @@ hterm.Terminal.prototype.appendRows_ = function(count) {
  * In this case, the blank lines scrolled into the scroll region are made of
  * the nodes we scrolled off.  These have their rowIndex properties carefully
  * renumbered so as not to confuse the ScrollPort.
+ *
+ * @param {number} fromIndex The start index.
+ * @param {number} count The number of rows to move.
+ * @param {number} toIndex The destination index.
  */
 hterm.Terminal.prototype.moveRows_ = function(fromIndex, count, toIndex) {
   var ary = this.screen_.removeRows(fromIndex, count);
@@ -10928,6 +11913,10 @@ hterm.Terminal.prototype.moveRows_ = function(fromIndex, count, toIndex) {
  * Rows in the scrollback buffer cannot be renumbered.  Since they are not
  * addressable (you can't delete them, scroll them, etc), you should have
  * no need to renumber scrollback rows.
+ *
+ * @param {number} start The start index.
+ * @param {number} end The end index.
+ * @param {hterm.Screen} opt_screen The screen to renumber.
  */
 hterm.Terminal.prototype.renumberRows_ = function(start, end, opt_screen) {
   var screen = opt_screen || this.screen_;
@@ -11164,6 +12153,8 @@ hterm.Terminal.prototype.eraseToLeft = function() {
  * eraseToRight is ignored in the presence of a cursor overflow.  This deviates
  * from xterm, but agrees with gnome-terminal and konsole, xfce4-terminal.  See
  * crbug.com/232390 for details.
+ *
+ * @param {number} opt_count The number of characters to erase.
  */
 hterm.Terminal.prototype.eraseToRight = function(opt_count) {
   if (this.screen_.cursorPosition.overflow)
@@ -11335,6 +12326,8 @@ hterm.Terminal.prototype.insertLines = function(count) {
  *
  * New rows are added to the bottom of scroll region to take their place.  New
  * rows are strictly there to take up space and have no content or style.
+ *
+ * @param {number} count The number of lines to delete.
  */
 hterm.Terminal.prototype.deleteLines = function(count) {
   var cursor = this.saveCursor();
@@ -11362,6 +12355,8 @@ hterm.Terminal.prototype.deleteLines = function(count) {
  * Inserts the given number of spaces at the current cursor position.
  *
  * The cursor position is not changed.
+ *
+ * @param {number} count The number of spaces to insert.
  */
 hterm.Terminal.prototype.insertSpace = function(count) {
   var cursor = this.saveCursor();
@@ -11454,6 +12449,12 @@ hterm.Terminal.prototype.setCursorPosition = function(row, column) {
   }
 };
 
+/**
+ * Move the cursor relative to its current position.
+ *
+ * @param {number} row
+ * @param {number} column
+ */
 hterm.Terminal.prototype.setRelativeCursorPosition = function(row, column) {
   var scrollTop = this.getVTScrollTop();
   row = lib.f.clamp(row + scrollTop, scrollTop, this.getVTScrollBottom());
@@ -11461,6 +12462,12 @@ hterm.Terminal.prototype.setRelativeCursorPosition = function(row, column) {
   this.screen_.setCursorPosition(row, column);
 };
 
+/**
+ * Move the cursor to the specified position.
+ *
+ * @param {number} row
+ * @param {number} column
+ */
 hterm.Terminal.prototype.setAbsoluteCursorPosition = function(row, column) {
   row = lib.f.clamp(row, 0, this.screenSize.height - 1);
   column = lib.f.clamp(column, 0, this.screenSize.width - 1);
@@ -11638,6 +12645,8 @@ hterm.Terminal.prototype.cursorRight = function(count) {
  * TODO(rginda): Test xterm to see if reverse is respected for text that has
  * been drawn with attributes that happen to coincide with the default
  * 'no-attribute' colors.  My guess is probably not.
+ *
+ * @param {boolean} state The state to set.
  */
 hterm.Terminal.prototype.setReverseVideo = function(state) {
   this.options_.reverseVideo = state;
@@ -11724,6 +12733,8 @@ hterm.Terminal.prototype.setInsertMode = function(state) {
  * If auto carriage return is on then a formfeed character is interpreted
  * as a newline, otherwise it's the same as a linefeed.  The difference boils
  * down to whether or not the cursor column is reset.
+ *
+ * @param {boolean} state The state to set.
  */
 hterm.Terminal.prototype.setAutoCarriageReturn = function(state) {
   this.options_.autoCarriageReturn = state;
@@ -11986,6 +12997,10 @@ hterm.Terminal.prototype.showZoomWarning_ = function(state) {
         '-webkit-user-select: none;' +
         '-moz-text-size-adjust: none;' +
         '-moz-user-select: none;');
+
+    this.zoomWarningNode_.addEventListener('click', function(e) {
+      this.parentNode.removeChild(this);
+    });
   }
 
   this.zoomWarningNode_.textContent = lib.MessageManager.replaceReferences(
@@ -12086,6 +13101,8 @@ hterm.Terminal.prototype.paste = function() {
  * Copy a string to the system clipboard.
  *
  * Note: If there is a selected range in the terminal, it'll be cleared.
+ *
+ * @param {string} str The string to copy.
  */
 hterm.Terminal.prototype.copyStringToClipboard = function(str) {
   if (this.prefs_.get('enable-clipboard-notice'))
@@ -12121,6 +13138,11 @@ hterm.Terminal.prototype.copyStringToClipboard = function(str) {
   copySource.parentNode.removeChild(copySource);
 };
 
+/**
+ * Returns the selected text, or null if no text is selected.
+ *
+ * @return {string|null}
+ */
 hterm.Terminal.prototype.getSelectionText = function() {
   var selection = this.scrollPort_.selection;
   selection.sync();
@@ -12152,7 +13174,7 @@ hterm.Terminal.prototype.getSelectionText = function() {
   // End offset measures from the end of the line.
   var endOffset = (hterm.TextAttributes.nodeWidth(selection.endNode) -
                    selection.endOffset);
-  var node = selection.endNode;
+  node = selection.endNode;
 
   if (node.nodeName != 'X-ROW') {
     // If the selection doesn't end on an x-row node, then it must be
@@ -12202,11 +13224,47 @@ hterm.Terminal.prototype.onVTKeystroke = function(string) {
 };
 
 /**
+ * Launches url in a new tab.
+ *
+ * @param {string} url URL to launch in a new tab.
+ */
+hterm.Terminal.prototype.openUrl = function(url) {
+  var win = window.open(url, '_blank');
+  win.focus();
+}
+
+/**
+ * Open the selected url.
+ */
+hterm.Terminal.prototype.openSelectedUrl_ = function() {
+  var str = this.getSelectionText();
+
+  // If there is no selection, try and expand wherever they clicked.
+  if (str == null) {
+    this.screen_.expandSelection(this.document_.getSelection());
+    str = this.getSelectionText();
+  }
+
+  // Make sure URL is valid before opening.
+  if (str.length > 2048 || str.search(/[\s\[\](){}<>"'\\^`]/) >= 0)
+    return;
+  // If the URL isn't anchored, it'll open relative to the extension.
+  // We have no way of knowing the correct schema, so assume http.
+  if (str.search('^[a-zA-Z][a-zA-Z0-9+.-]*://') < 0)
+    str = 'http://' + str;
+
+  this.openUrl(str);
+}
+
+
+/**
  * Add the terminalRow and terminalColumn properties to mouse events and
  * then forward on to onMouse().
  *
  * The terminalRow and terminalColumn properties contain the (row, column)
  * coordinates for the mouse event.
+ *
+ * @param {Event} e The mouse event to handle.
  */
 hterm.Terminal.prototype.onMouse_ = function(e) {
   if (e.processedByTerminalHandler_) {
@@ -12219,6 +13277,9 @@ hterm.Terminal.prototype.onMouse_ = function(e) {
     // we decorate the event object with this property instead.
     return;
   }
+
+  var reportMouseEvents = (!this.defeatMouseReports_ &&
+      this.vt.mouseReport != this.vt.MOUSE_REPORT_DISABLED);
 
   e.processedByTerminalHandler_ = true;
 
@@ -12233,8 +13294,7 @@ hterm.Terminal.prototype.onMouse_ = function(e) {
     return;
   }
 
-  if (this.options_.cursorVisible &&
-      this.vt.mouseReport == this.vt.MOUSE_REPORT_DISABLED) {
+  if (this.options_.cursorVisible && !reportMouseEvents) {
     // If the cursor is visible and we're not sending mouse events to the
     // host app, then we want to hide the terminal cursor when the mouse
     // cursor is over top.  This keeps the terminal cursor from interfering
@@ -12248,24 +13308,34 @@ hterm.Terminal.prototype.onMouse_ = function(e) {
   }
 
   if (e.type == 'mousedown') {
-    if (e.altKey || this.vt.mouseReport == this.vt.MOUSE_REPORT_DISABLED) {
+    if (e.altKey || !reportMouseEvents) {
       // If VT mouse reporting is disabled, or has been defeated with
       // alt-mousedown, then the mouse will act on the local selection.
-      this.reportMouseEvents_ = false;
+      this.defeatMouseReports_ = true;
       this.setSelectionEnabled(true);
     } else {
       // Otherwise we defer ownership of the mouse to the VT.
-      this.reportMouseEvents_ = true;
+      this.defeatMouseReports_ = false;
       this.document_.getSelection().collapseToEnd();
       this.setSelectionEnabled(false);
       e.preventDefault();
     }
   }
 
-  if (!this.reportMouseEvents_) {
-    if (e.type == 'dblclick') {
+  if (!reportMouseEvents) {
+    if (e.type == 'dblclick' && this.copyOnSelect) {
       this.screen_.expandSelection(this.document_.getSelection());
-      hterm.copySelectionToClipboard(this.document_);
+      this.copySelectionToClipboard(this.document_);
+    }
+
+    if (e.type == 'click' && !e.shiftKey && e.ctrlKey) {
+      // Debounce this event with the dblclick event.  If you try to doubleclick
+      // a URL to open it, Chrome will fire click then dblclick, but we won't
+      // have expanded the selection text at the first click event.
+      clearTimeout(this.timeouts_.openUrl);
+      this.timeouts_.openUrl = setTimeout(this.openSelectedUrl_.bind(this),
+                                          500);
+      return;
     }
 
     if (e.type == 'mousedown' && e.which == this.mousePasteButton)
@@ -12273,7 +13343,7 @@ hterm.Terminal.prototype.onMouse_ = function(e) {
 
     if (e.type == 'mouseup' && e.which == 1 && this.copyOnSelect &&
         !this.document_.getSelection().isCollapsed) {
-      hterm.copySelectionToClipboard(this.document_);
+      this.copySelectionToClipboard(this.document_);
     }
 
     if ((e.type == 'mousemove' || e.type == 'mouseup') &&
@@ -12306,8 +13376,7 @@ hterm.Terminal.prototype.onMouse_ = function(e) {
     // Restore this on mouseup in case it was temporarily defeated with a
     // alt-mousedown.  Only do this when the selection is empty so that
     // we don't immediately kill the users selection.
-    this.reportMouseEvents_ = (this.vt.mouseReport !=
-                               this.vt.MOUSE_REPORT_DISABLED);
+    this.defeatMouseReports_ = false;
   }
 };
 
@@ -12316,11 +13385,15 @@ hterm.Terminal.prototype.onMouse_ = function(e) {
  *
  * The event parameter will be a normal DOM mouse click event with additional
  * 'terminalRow' and 'terminalColumn' properties.
+ *
+ * @param {Event} e The mouse event to handle.
  */
 hterm.Terminal.prototype.onMouse = function(e) { };
 
 /**
  * React when focus changes.
+ *
+ * @param {boolean} focused True if focused, false otherwise.
  */
 hterm.Terminal.prototype.onFocusChange_ = function(focused) {
   this.cursorNode_.setAttribute('focus', focused);
@@ -12338,6 +13411,8 @@ hterm.Terminal.prototype.onScroll_ = function() {
 
 /**
  * React when text is pasted into the scrollPort.
+ *
+ * @param {Event} e The DOM paste event to handle.
  */
 hterm.Terminal.prototype.onPaste_ = function(e) {
   var data = e.text.replace(/\n/mg, '\r');
@@ -12350,6 +13425,8 @@ hterm.Terminal.prototype.onPaste_ = function(e) {
 
 /**
  * React when the user tries to copy from the scrollPort.
+ *
+ * @param {Event} e The DOM copy event.
  */
 hterm.Terminal.prototype.onCopy_ = function(e) {
   if (!this.useDefaultWindowCopy) {
@@ -12368,14 +13445,16 @@ hterm.Terminal.prototype.onCopy_ = function(e) {
  */
 hterm.Terminal.prototype.onResize_ = function() {
   var columnCount = Math.floor(this.scrollPort_.getScreenWidth() /
-                               this.scrollPort_.characterSize.width);
+                               this.scrollPort_.characterSize.width) || 0;
   var rowCount = lib.f.smartFloorDivide(this.scrollPort_.getScreenHeight(),
-                            this.scrollPort_.characterSize.height);
+                            this.scrollPort_.characterSize.height) || 0;
 
   if (columnCount <= 0 || rowCount <= 0) {
     // We avoid these situations since they happen sometimes when the terminal
     // gets removed from the document or during the initial load, and we can't
     // deal with that.
+    // This can also happen if called before the scrollPort calculates the
+    // character size, meaning we dived by 0 above and default to 0 values.
     return;
   }
 
@@ -12435,7 +13514,7 @@ hterm.Terminal.prototype.setScrollbarVisible = function(state) {
  *
  * Defaults to 1.
  *
- * @param {number} multiplier.
+ * @param {number} multiplier The multiplier to set.
  */
 hterm.Terminal.prototype.setScrollWheelMoveMultipler = function(multiplier) {
   this.scrollPort_.setScrollWheelMoveMultipler(multiplier);
@@ -13073,7 +14152,7 @@ hterm.TextAttributes.nodeSubstring = function(node, start, end) {
   } else {
     return node.textContent.substring(start, end);
   }
-}
+};
 
 /**
  * Static method to split a string into contiguous runs of single-width
@@ -13089,25 +14168,27 @@ hterm.TextAttributes.splitWidecharString = function(str) {
   var rv = [];
   var base = 0, length = 0;
 
-  for (var i = 0; i < str.length; i++) {
-    var c = str.charCodeAt(i);
+  for (var i = 0; i < str.length;) {
+    var c = str.codePointAt(i);
+    var increment = (c <= 0xffff) ? 1 : 2;
     if (c < 128 || lib.wc.charWidth(c) == 1) {
-      length++;
+      length += increment;
     } else {
       if (length) {
         rv.push({str: str.substr(base, length)});
       }
-      rv.push({str: str.substr(i, 1), wcNode: true});
-      base = i + 1;
+      rv.push({str: str.substr(i, increment), wcNode: true});
+      base = i + increment;
       length = 0;
     }
+    i += increment;
   }
 
   if (length)
     rv.push({str: str.substr(base, length)});
 
   return rv;
-}
+};
 // SOURCE FILE: hterm/js/hterm_vt.js
 // Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -14162,6 +15243,11 @@ hterm.VT.CC1['\x13'] = hterm.VT.ignore;
  * It also causes the error character to be displayed.
  */
 hterm.VT.CC1['\x18'] = function(parseState) {
+  // If we've shifted in the G1 character set, shift it back out to
+  // the default character set.
+  if (this.GL == 'G1') {
+    this.GL = 'G0';
+  }
   parseState.resetParseFunction();
   this.terminal.print('?');
 };
@@ -16046,22 +17132,22 @@ lib.resource.add('hterm/audio/bell', 'audio/ogg;base64',
 );
 
 lib.resource.add('hterm/concat/date', 'text/plain',
-'Fri, 03 Apr 2015 09:02:15 +0000' +
+'Fri, 17 Feb 2017 15:08:16 +0000' +
 ''
 );
 
 lib.resource.add('hterm/changelog/version', 'text/plain',
-'1.54' +
+'1.61' +
 ''
 );
 
 lib.resource.add('hterm/changelog/date', 'text/plain',
-'2015-03-19' +
+'2017-01-31' +
 ''
 );
 
 lib.resource.add('hterm/git/HEAD', 'text/plain',
-'5db5b0ceefff97ce8b7a97edd3f5ba6857db54cf' +
+'git rev-parse HEAD' +
 ''
 );
 
