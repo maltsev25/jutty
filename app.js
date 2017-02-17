@@ -5,6 +5,7 @@ var path = require('path');
 var server = require('socket.io');
 var pty = require('pty.js');
 var fs = require('fs');
+var log = require('yalm');
 
 var opts = require('optimist')
     .options({
@@ -82,11 +83,11 @@ app.use('/', express.static(path.join(__dirname, 'public/')));
 
 if (runhttps) {
     httpserv = https.createServer(opts.ssl, app).listen(opts.port, function() {
-        console.log('https on port ' + opts.port);
+        log.info('https on port ' + opts.port);
     });
 } else {
     httpserv = http.createServer(app).listen(opts.port, function() {
-        console.log('http on port ' + opts.port);
+        log.info('http on port ' + opts.port);
     });
 }
 
@@ -94,7 +95,7 @@ var io = server(httpserv,{path: '/socket.io'});
 io.on('connection', function(socket){
     var sshuser = '';
     var request = socket.request;
-    console.log((new Date()) + ' Connection accepted.');
+    log.info('socket.io connection');
     if (match = request.headers.referer.match('/ssh/.+$')) {
         sshuser = match[0].replace('/ssh/', '') + '@';
     } else if (globalsshuser) {
@@ -115,12 +116,12 @@ io.on('connection', function(socket){
             rows: 30
         });
     }
-    console.log((new Date()) + " PID=" + term.pid + " STARTED on behalf of user=" + sshuser)
+    log.info("PID=" + term.pid + " STARTED on behalf of user=" + sshuser)
     term.on('data', function(data) {
         socket.emit('output', data);
     });
     term.on('exit', function(code) {
-        console.log((new Date()) + " PID=" + term.pid + " ENDED")
+        log.info("PID=" + term.pid + " ENDED")
     });
     socket.on('resize', function(data) {
         term.resize(data.col, data.row);
