@@ -28,8 +28,8 @@
     "url": "https://github.com/hobbyquaker/jutty/issues"
   },
   "homepage": "https://github.com/hobbyquaker/jutty",
-  "preferGlobal": "true",
+  "preferGlobal": true,
   "bin": {
-    "wetty": "./bin/wetty.js"
+    "wetty": "./bin/jutty.js"
   }
 }
