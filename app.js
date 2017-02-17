@@ -58,7 +58,10 @@ process.on('uncaughtException', function (e) {
 var httpserv;
 
 var app = express();
-app.get('/ssh/:user', function(req, res) {
+app.get('/ssh/:params', function(req, res) {
+    res.sendfile(__dirname + '/public/index.html');
+});
+app.get('/telnet/:params', function(req, res) {
     res.sendfile(__dirname + '/public/index.html');
 });
 app.use('/', express.static(path.join(__dirname, 'public/')));
@@ -82,15 +85,21 @@ io.on('connection', function(socket){
     log.info('socket.io connection');
 
     log.debug(request.headers.referer);
+
+    var cmd;
+    var params;
+
     if (match = request.headers.referer.match('/ssh/([^@]+)@([^:]+):?([0-9]*)$')) {
-        sshuser = match[1];
-        sshhost = match[2];
-        sshport = parseInt(match[3], 10) || 22;
+        cmd = 'ssh';
+        params = [match[1] + '@' + match[2], '-p', (parseInt(match[3], 10) || 22), '-o', 'PreferredAuthentications=' + sshauth]
+
+    } else if (match = request.headers.referer.match('/telnet/([^:]+):?([0-9]*)$')) {
+        cmd = 'telnet';
+        params = [match[1], (parseInt(match[2], 10) || 23)];
     }
 
-    var params = [sshuser + '@' + sshhost, '-p', sshport, '-o', 'PreferredAuthentications=' + sshauth]
-    log.debug('ssh', params.join(' '));
-    var term = pty.spawn('ssh', params, {
+    log.debug(cmd, params.join(' '));
+    var term = pty.spawn(cmd, params, {
         name: 'xterm-256color',
         cols: 80,
         rows: 30
