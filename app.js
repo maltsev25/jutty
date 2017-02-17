@@ -6,6 +6,7 @@ var server = require('socket.io');
 var pty = require('pty.js');
 var fs = require('fs');
 var log = require('yalm');
+log.setLevel('debug');
 
 var opts = require('optimist')
     .options({
@@ -16,18 +17,6 @@ var opts = require('optimist')
         sslcert: {
             demand: false,
             description: 'path to SSL certificate'
-        },
-        sshhost: {
-            demand: false,
-            description: 'ssh server host'
-        },
-        sshport: {
-            demand: false,
-            description: 'ssh server port'
-        },
-        sshuser: {
-            demand: false,
-            description: 'ssh user'
         },
         sshauth: {
             demand: false,
@@ -46,13 +35,7 @@ var sshhost = 'localhost';
 var sshauth = 'password';
 var globalsshuser = '';
 
-if (opts.sshport) {
-    sshport = opts.sshport;
-}
 
-if (opts.sshhost) {
-    sshhost = opts.sshhost;
-}
 
 if (opts.sshauth) {
 	sshauth = opts.sshauth
@@ -77,6 +60,7 @@ var httpserv;
 
 var app = express();
 app.get('/ssh/:user', function(req, res) {
+    console.log('SSH!')
     res.sendfile(__dirname + '/public/index.html');
 });
 app.use('/', express.static(path.join(__dirname, 'public/')));
@@ -95,27 +79,24 @@ var io = server(httpserv,{path: '/socket.io'});
 io.on('connection', function(socket){
     var sshuser = '';
     var request = socket.request;
+    var match;
     log.info('socket.io connection');
-    if (match = request.headers.referer.match('/ssh/.+$')) {
-        sshuser = match[0].replace('/ssh/', '') + '@';
-    } else if (globalsshuser) {
-        sshuser = globalsshuser + '@';
+    log.debug(request.headers.referer);
+    if (match = request.headers.referer.match('/ssh/([^@]+)@([^:]+):?([0-9]*)$')) {
+        sshuser = match[1];
+        sshhost = match[2];
+        sshport = parseInt(match[3], 10) || 22;
+
     }
 
-    var term;
-    if (process.getuid() == 0) {
-        term = pty.spawn('/bin/login', [], {
-            name: 'xterm-256color',
-            cols: 80,
-            rows: 30
-        });
-    } else {
-        term = pty.spawn('ssh', [sshuser + sshhost, '-p', sshport, '-o', 'PreferredAuthentications=' + sshauth], {
-            name: 'xterm-256color',
-            cols: 80,
-            rows: 30
-        });
-    }
+    var params = [sshuser + '@' + sshhost, '-p', sshport, '-o', 'PreferredAuthentications=' + sshauth]
+    log.debug('ssh', params.join(' '));
+    var term = pty.spawn('ssh', params, {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 30
+    });
+
     log.info("PID=" + term.pid + " STARTED on behalf of user=" + sshuser)
     term.on('data', function(data) {
         socket.emit('output', data);
