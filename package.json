@@ -1,6 +1,6 @@
 {
-  "name": "wetty",
-  "version": "0.2.0",
+  "name": "jutty",
+  "version": "1.0.0",
   "dependencies": {
     "express": "3.5.1",
     "optimist": "^0.6",
@@ -16,18 +16,18 @@
     "grunt-git": "^0.3",
     "grunt-contrib-clean": "^0.6"
   },
-  "description": "Wetty = Web + tty. Terminal access in browser over http/https ",
+  "description": "Web-based ssh/telnet client, useful in environments where only http(s) is allowed",
   "main": "app.js",
   "repository": {
     "type": "git",
-    "url": "git://github.com/krishnasrinivas/wetty.git"
+    "url": "git://github.com/hobbyquaker/jutty.git"
   },
-  "author": "Krishna Srinivas <krishna.srinivas@gmail.com> (https://github.com/krishnasrinivas)",
+  "author": "Sebastian Raff <hq@ccu.io> (https://github.com/hobbyquaker)",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/krishnasrinivas/wetty/issues"
+    "url": "https://github.com/hobbyquaker/jutty/issues"
   },
-  "homepage": "https://github.com/krishnasrinivas/wetty",
+  "homepage": "https://github.com/hobbyquaker/jutty",
   "preferGlobal": "true",
   "bin": {
     "wetty": "./bin/wetty.js"

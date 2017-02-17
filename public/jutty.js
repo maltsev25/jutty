@@ -1,14 +1,14 @@
 var term;
-var socket = io(location.origin, {path: '/socket.io'})
+var socket = io(location.origin, {path: '/socket.io'});
 var buf = '';
 
-function Wetty(argv) {
+function Jutty(argv) {
     this.argv_ = argv;
     this.io = null;
     this.pid_ = -1;
 }
 
-Wetty.prototype.run = function () {
+Jutty.prototype.run = function () {
     this.io = this.argv_.io.push();
 
     this.io.onVTKeystroke = this.sendString_.bind(this);
@@ -16,11 +16,11 @@ Wetty.prototype.run = function () {
     this.io.onTerminalResize = this.onTerminalResize.bind(this);
 };
 
-Wetty.prototype.sendString_ = function (str) {
+Jutty.prototype.sendString_ = function (str) {
     socket.emit('input', str);
 };
 
-Wetty.prototype.onTerminalResize = function (col, row) {
+Jutty.prototype.onTerminalResize = function (col, row) {
     socket.emit('resize', {col: col, row: row});
 };
 
@@ -37,7 +37,7 @@ socket.on('connect', function () {
         term.prefs_.set('ctrl-v-paste', true);
         term.prefs_.set('use-default-window-copy', true);
 
-        term.runCommandClass(Wetty, document.location.hash.substr(1));
+        term.runCommandClass(Jutty, document.location.hash.substr(1));
         socket.emit('resize', {
             col: term.screenSize.width,
             row: term.screenSize.height
