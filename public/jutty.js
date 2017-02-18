@@ -138,13 +138,21 @@ $(document).ready(function () {
                 '</button></a>');
         });
         $('a.load').click(function (e) {
+            e.stopPropagation();
             setVals(savedConnections[$(this).data('target')]);
+            return false;
         });
-        $('a.load').dblclick(start);
-        $('button.delete').click(function () {
+        $('a.load').dblclick(function (e) {
+            e.stopPropagation();
+            start();
+            return false;
+        });
+        $('button.delete').click(function (e) {
+            e.stopPropagation();
             delete savedConnections[$(this).data('name')];
             store.set('connections', savedConnections);
             listConnections();
+            return false;
         });
     }
 
