@@ -1,11 +1,12 @@
-var express =   require('express');
-var http =      require('http');
-var https =     require('https');
-var path =      require('path');
-var server =    require('socket.io');
-var pty =       require('pty.js');
-var fs =        require('fs');
-var log =       require('yalm');
+var express =       require('express');
+var bodyParser =    require('body-parser');
+var http =          require('http');
+var https =         require('https');
+var path =          require('path');
+var server =        require('socket.io');
+var pty =           require('pty.js');
+var fs =            require('fs');
+var log =           require('yalm');
 log.setLevel('debug');
 
 var opts = require('optimist')
@@ -18,10 +19,6 @@ var opts = require('optimist')
             demand: false,
             description: 'path to SSL certificate'
         },
-        sshauth: {
-            demand: false,
-            description: 'defaults to "password", you can use "publickey,password" instead'
-        },
         port: {
             demand: true,
             alias: 'p',
@@ -30,18 +27,6 @@ var opts = require('optimist')
     }).boolean('allow_discovery').argv;
 
 var runhttps = false;
-var sshport = 22;
-var sshhost = 'localhost';
-var sshauth = 'password';
-var globalsshuser = '';
-
-if (opts.sshauth) {
-	sshauth = opts.sshauth
-}
-
-if (opts.sshuser) {
-    globalsshuser = opts.sshuser;
-}
 
 if (opts.sslkey && opts.sslcert) {
     runhttps = true;
@@ -51,19 +36,18 @@ if (opts.sslkey && opts.sslcert) {
     };
 }
 
-process.on('uncaughtException', function (e) {
-    console.error('Error: ' + e);
-});
-
 var httpserv;
 
 var app = express();
-app.get('/ssh/:params', function(req, res) {
-    res.sendfile(__dirname + '/public/index.html');
+
+app.use(bodyParser.urlencoded({
+    extended: true
+}));
+
+app.post('/', function(req, res) {
+    res.sendFile(__dirname + '/public/jutty.html');
 });
-app.get('/telnet/:params', function(req, res) {
-    res.sendfile(__dirname + '/public/index.html');
-});
+
 app.use('/', express.static(path.join(__dirname, 'public/')));
 
 if (runhttps) {
@@ -77,49 +61,54 @@ if (runhttps) {
 }
 
 var io = server(httpserv, {path: '/socket.io'});
-io.on('connection', function(socket){
-    var sshuser = '';
-    var request = socket.request;
-    var match;
 
+var term;
+
+io.on('connection', function (socket) {
     log.info('socket.io connection');
 
-    log.debug(request.headers.referer);
+    socket.on('start', function (data) {
 
-    var cmd;
-    var params;
+        var params;
 
-    if (match = request.headers.referer.match('/ssh/([^@]+)@([^:]+):?([0-9]*)$')) {
-        cmd = 'ssh';
-        params = [match[1] + '@' + match[2], '-p', (parseInt(match[3], 10) || 22), '-o', 'PreferredAuthentications=' + sshauth]
+        if (data.type === 'telnet') {
+            params = [data.host, data.port];
+        } else {
+            data.type = 'ssh';
+            params = [data.user + '@' + data.host];
+        }
 
-    } else if (match = request.headers.referer.match('/telnet/([^:]+):?([0-9]*)$')) {
-        cmd = 'telnet';
-        params = [match[1], (parseInt(match[2], 10) || 23)];
-    }
+        log.info(data.type, params.join(' '));
 
-    log.debug(cmd, params.join(' '));
-    var term = pty.spawn(cmd, params, {
-        name: 'xterm-256color',
-        cols: 80,
-        rows: 30
+        term = pty.spawn(data.type, params, {
+            name: 'xterm-256color',
+            cols: data.col,
+            rows: data.row
+        });
+
+        log.info(term.pid, 'spawned');
+        term.on('data', function(data) {
+            socket.emit('output', data);
+        });
+        term.on('exit', function (code) {
+            log.info(term.pid, 'ended');
+            socket.emit('end');
+            term.destroy();
+            term = null;
+        });
+
     });
 
-    log.info("PID=" + term.pid + " STARTED on behalf of user=" + sshuser);
-    term.on('data', function(data) {
-        socket.emit('output', data);
-    });
-    term.on('exit', function (code) {
-        log.info("PID=" + term.pid + " ENDED");
-        socket.emit('end');
-    });
     socket.on('resize', function (data) {
-        term.resize(data.col, data.row);
+        term && term.resize(data.col, data.row);
     });
+
     socket.on('input', function (data) {
-        term.write(data);
+        term && term.write(data);
     });
+
     socket.on('disconnect', function () {
-        term.end();
+        term && term.end();
     });
+
 });

@@ -1,67 +1,190 @@
-var term;
-var socket = io(location.origin, {path: '/socket.io'});
-var buf = '';
+$(document).ready(function () {
 
-function Jutty(argv) {
-    this.argv_ = argv;
-    this.io = null;
-    this.pid_ = -1;
-}
 
-Jutty.prototype.run = function () {
-    this.io = this.argv_.io.push();
+    var term;
+    var socket = io(location.origin, {path: '/socket.io'});
+    var buf = '';
 
-    this.io.onVTKeystroke = this.sendString_.bind(this);
-    this.io.sendString = this.sendString_.bind(this);
-    this.io.onTerminalResize = this.onTerminalResize.bind(this);
-};
+    var $settings =     $('#settings');
+    var $terminal =     $('#terminal');
+    var $start =        $('#start');
+    var $host =         $('#host');
+    var $user =         $('#user');
+    var $type =         $('#type');
+    var $port =         $('#port');
+    var $key =          $('#key');
+    var $back =         $('#back');
+    var $backbutton =   $('#backbutton');
+    var $name =         $('#name');
+    var $save =         $('#save');
+    var $connections =  $('#connections');
 
-Jutty.prototype.sendString_ = function (str) {
-    socket.emit('input', str);
-};
+    var $ssh =          $('#ssh');
+    var $telnet =       $('#telnet');
+    var $sshOptions =   $('.ssh');
 
-Jutty.prototype.onTerminalResize = function (col, row) {
-    socket.emit('resize', {col: col, row: row});
-};
+    var savedConnections = store.get('connections') || {};
+    listConnections();
 
-socket.on('connect', function () {
-    lib.init(function () {
-        hterm.defaultStorage = new lib.Storage.Local();
-        term = new hterm.Terminal();
-        window.term = term;
-        term.decorate(document.getElementById('terminal'));
 
-        term.setCursorPosition(0, 0);
-        term.setCursorVisible(true);
-        term.prefs_.set('ctrl-c-copy', true);
-        term.prefs_.set('ctrl-v-paste', true);
-        term.prefs_.set('use-default-window-copy', true);
+    function Jutty(argv) {
+        this.argv_ = argv;
+        this.io = null;
+        this.pid_ = -1;
+    }
 
-        term.runCommandClass(Jutty, document.location.hash.substr(1));
-        socket.emit('resize', {
-            col: term.screenSize.width,
-            row: term.screenSize.height
+    Jutty.prototype.run = function () {
+        this.io = this.argv_.io.push();
+
+        this.io.onVTKeystroke = this.sendString_.bind(this);
+        this.io.sendString = this.sendString_.bind(this);
+        this.io.onTerminalResize = this.onTerminalResize.bind(this);
+    };
+
+    Jutty.prototype.sendString_ = function (str) {
+        socket.emit('input', str);
+    };
+
+    Jutty.prototype.onTerminalResize = function (col, row) {
+        socket.emit('resize', {col: col, row: row});
+    };
+
+    socket.on('connect', function () {
+        $('#disconnect').hide();
+
+        lib.init(function () {
+            hterm.defaultStorage = new lib.Storage.Local();
+            term = new hterm.Terminal();
+            window.term = term;
+            term.decorate(document.getElementById('terminal'));
+
+            term.setCursorPosition(0, 0);
+            term.setCursorVisible(true);
+
+            term.prefs_.set('ctrl-c-copy', true);
+            term.prefs_.set('ctrl-v-paste', true);
+            term.prefs_.set('use-default-window-copy', true);
+
+            term.runCommandClass(Jutty, document.location.hash.substr(1));
+
+            //socket.emit('start', {});
+
+            /*
+             socket.emit('resize', {
+             col: term.screenSize.width,
+             row: term.screenSize.height
+             });
+             */
+
+            if (buf && buf != '') {
+                term.io.writeUTF16(buf);
+                buf = '';
+            }
         });
+    });
 
-        if (buf && buf != '') {
-            term.io.writeUTF16(buf);
-            buf = '';
+    socket.on('output', function (data) {
+        if (!term) {
+            buf += data;
+            return;
+        }
+        term.io.writeUTF16(data);
+    });
+
+    socket.on('end', function () {
+        console.log('process end');
+        $back.show();
+        $backbutton.focus();
+
+    });
+
+    socket.on('disconnect', function () {
+        $('#disconnect').show();
+    });
+
+    $backbutton.click(function () {
+        term.reset();
+        $back.hide();
+        $settings.show();
+        $terminal.hide();
+    });
+
+    function getVals() {
+        return {
+            host: $.trim($host.val()),
+            user: $.trim($user.val()),
+            type: $ssh.is(':checked') ? 'ssh' : telnet,
+            port: $.trim($port.val()),
+            key:  $.trim($key.val()),
+            name: $.trim($name.val())
+        }
+    }
+
+    function setVals(obj) {
+        $host.val(obj.host || '');
+        $user.val(obj.user || '');
+        $type.val(obj.type || 'ssh');
+        $port.val(obj.port || '22');
+        $key.val(obj.key || '');
+    }
+
+    function listConnections() {
+        var names = Object.keys(savedConnections).sort();
+        $connections.html('');
+        names.forEach(function (name) {
+            $connections.append('<a class="list-group-item load" href="#" data-target="' + name + '">' + name +
+                '<button class="btn btn-xs btn-danger delete" data-name="' + name + '">' +
+                '<span class="glyphicon glyphicon-trash" aria-hidden="true"></span>' +
+                '</button></a>');
+        });
+        $('a.load').click(function (e) {
+            setVals(savedConnections[$(this).data('target')]);
+        });
+        $('a.load').dblclick(start);
+        $('button.delete').click(function () {
+            delete savedConnections[$(this).data('name')];
+            store.set('connections', savedConnections);
+            listConnections();
+        });
+    }
+
+    $start.click(start);
+
+    function start() {
+        var vals = getVals();
+        vals.col = term.screenSize.width;
+        vals.row = term.screenSize.height;
+        socket.emit('start', vals);
+        $settings.hide();
+        $terminal.show().focus();
+    }
+
+    $save.click(function () {
+        var vals = getVals();
+        savedConnections[vals.name] = vals;
+        store.set('connections', savedConnections);
+
+        listConnections();
+    });
+
+
+
+    $ssh.change(function () {
+        $sshOptions.show();
+    });
+    $telnet.change(function () {
+        $sshOptions.hide();
+    });
+
+    $("#keyfile").change(function () {
+        if (this.files && this.files[0]) {
+            var reader = new FileReader();
+
+            reader.onload = function (e) {
+                $('#key').val(e.target.result);
+            };
+            reader.readAsText(this.files[0]);
         }
     });
 });
 
-socket.on('output', function (data) {
-    if (!term) {
-        buf += data;
-        return;
-    }
-    term.io.writeUTF16(data);
-});
-
-socket.on('end', function () {
-    console.log('process end');
-});
-
-socket.on('disconnect', function () {
-    console.log("Socket.io connection closed");
-});

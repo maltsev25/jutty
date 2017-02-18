@@ -2,6 +2,7 @@
   "name": "jutty",
   "version": "1.0.0",
   "dependencies": {
+    "body-parser": "^1.16.1",
     "express": "^4.14.1",
     "optimist": "^0.6.1",
     "pty.js": "^0.3.1",
