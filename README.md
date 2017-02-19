@@ -1,18 +1,13 @@
 # JuTTY
 
-> Web-based ssh/telnet, useful in environments where only http(s) is allowed.
+> Web-based SSH/Telnet
 
 Forked from [wetty](https://github.com/krishnasrinivas/wetty)
 
-Uses ChromeOS' terminal emulator (hterm) which is a full fledged implementation of
-terminal emulation written entirely in Javascript.
-
-hterm source - https://chromium.googlesource.com/apps/libapps/+/master/hterm/
 
 ![JuTTY](/terminal.png?raw=true)
 
-Install
--------
+## Install
 
 *  `git clone https://github.com/hobbyquaker/jutty`
 
@@ -20,18 +15,12 @@ Install
 
 *  `npm install`
 
-Run on HTTP:
------------
+## Run on HTTP:
 
     node app.js -p 3000
 
 
-You can also specify the SSH user name in the address bar like this:
-
-  `http://yourserver:3000/jutty/ssh/<username>`
-
-Run on HTTPS:
-------------
+## Run on HTTPS:
 
 Always use HTTPS! If you don't have SSL certificates from a CA you can
 create a self signed certificate using this command:
@@ -43,8 +32,7 @@ And then run:
     node app.js --sslkey key.pem --sslcert cert.pem -p 3000
 
 
-Run jutty behind nginx:
-----------------------
+## Run jutty behind nginx:
 
 Put the following configuration in nginx's conf:
 
@@ -65,25 +53,13 @@ Put the following configuration in nginx's conf:
 
 **Note that if your Nginx is configured for HTTPS you should run jutty without SSL.**
 
-Dockerized Version
-------------------
+## Dockerized Version
 
-This repo includes a Dockerfile you can use to run a Dockerized version of jutty.  You can run
-whatever you want!
-
-Just do:
-
-```
-    docker run --name term -p 3000 -dt hobbyquaker/jutty
-```
+This repo includes a Dockerfile you can use to create a Dockerized version of jutty. 
+ 
 
 
-
-Visit the appropriate URL in your browser (`[localhost|$(boot2docker ip)]:PORT`).  
-
-
-Run jutty as a service daemon
------------------------------
+## Run jutty as a service daemon
 
 Install jutty globally with -g option:
 
@@ -96,3 +72,16 @@ Install jutty globally with -g option:
 This will start jutty on port 3000. If you want to change the port or redirect stdout/stderr you should change the last line in `jutty.conf` file, something like this:
 
     exec sudo -u root jutty -p 80 >> /var/log/jutty.log 2>&1
+
+## Credits
+
+#### Software used in JuTTY
+
+* [hterm](https://chromium.googlesource.com/apps/libapps/+/master/hterm/)
+* [pty.js](https://github.com/chjj/pty.js/)
+* [socket.io](http://socket.io/)
+* [jquery](https://jquery.com/)
+* [bootstrap](http://getbootstrap.com/)
+* [bootswatch darkly theme](https://bootswatch.com/darkly/)
+* [bootstrap file input](http://plugins.krajee.com/file-input)
+* [store.js](https://github.com/marcuswestin/store.js/)
