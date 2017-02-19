@@ -1,4 +1,4 @@
-FROM node:latest
+FROM ncarlier/nodejs-arm:latest
 MAINTAINER Sebastian Raff <hq@ccu.io>
 
 ADD . /app
