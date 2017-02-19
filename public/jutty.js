@@ -2,6 +2,8 @@ $(document).ready(function () {
 
 
     var term;
+    hterm.defaultStorage = new lib.Storage.Local();
+
     var socket = io(location.origin, {path: '/socket.io'});
     var buf = '';
 
@@ -13,6 +15,8 @@ $(document).ready(function () {
     var $type =         $('#type');
     var $port =         $('#port');
     var $key =          $('#key');
+    var $keyfile =      $("#keyfile");
+    var $keyfilename =  $('#keyfilename');
     var $back =         $('#back');
     var $backbutton =   $('#backbutton');
     var $name =         $('#name');
@@ -49,11 +53,9 @@ $(document).ready(function () {
         socket.emit('resize', {col: col, row: row});
     };
 
-    socket.on('connect', function () {
-        $('#disconnect').hide();
-
+    function htermInit(cb) {
+        console.log('htermInit');
         lib.init(function () {
-            hterm.defaultStorage = new lib.Storage.Local();
             term = new hterm.Terminal();
             window.term = term;
             term.decorate(document.getElementById('terminal'));
@@ -80,7 +82,12 @@ $(document).ready(function () {
                 term.io.writeUTF16(buf);
                 buf = '';
             }
+            cb();
         });
+    }
+
+    socket.on('connect', function () {
+        $('#disconnect').hide();
     });
 
     socket.on('output', function (data) {
@@ -111,21 +118,33 @@ $(document).ready(function () {
 
     function getVals() {
         return {
-            host: $.trim($host.val()),
-            user: $.trim($user.val()),
-            type: $ssh.is(':checked') ? 'ssh' : telnet,
-            port: $.trim($port.val()),
-            key:  $.trim($key.val()),
-            name: $.trim($name.val())
+            host:           $.trim($host.val()),
+            user:           $.trim($user.val()),
+            type:           $ssh.is(':checked') ? 'ssh' : telnet,
+            port:           $.trim($port.val()),
+            key:            $.trim($key.val()),
+            keyfilename:    $.trim($keyfilename.val()),
+            name:           $.trim($name.val())
         }
     }
 
     function setVals(obj) {
+        console.log(obj);
         $host.val(obj.host || '');
         $user.val(obj.user || '');
         $type.val(obj.type || 'ssh');
         $port.val(obj.port || '22');
         $key.val(obj.key || '');
+        $keyfilename.val(obj.keyfilename || '');
+
+        if (obj.keyfilename) {
+            $keyfile.fileinput('addToStack', new File([obj.key], obj.keyfilename));
+            $keyfile.fileinput('refresh');
+        } else {
+            $keyfile.fileinput('reset');
+        }
+
+        $name.val('');
     }
 
     function listConnections() {
@@ -160,11 +179,13 @@ $(document).ready(function () {
 
     function start() {
         var vals = getVals();
-        vals.col = term.screenSize.width;
-        vals.row = term.screenSize.height;
-        socket.emit('start', vals);
-        $settings.hide();
-        $terminal.show().focus();
+        htermInit(function () {
+            vals.col = term.screenSize.width;
+            vals.row = term.screenSize.height;
+            socket.emit('start', vals);
+            $settings.hide();
+            $terminal.show().focus();
+        });
     }
 
     $save.click(function () {
@@ -184,15 +205,24 @@ $(document).ready(function () {
         $sshOptions.hide();
     });
 
-    $("#keyfile").change(function () {
+    $keyfile.change(function () {
         if (this.files && this.files[0]) {
             var reader = new FileReader();
-
+            $keyfilename.val(this.files[0].name);
             reader.onload = function (e) {
-                $('#key').val(e.target.result);
+                $key.val(e.target.result);
             };
             reader.readAsText(this.files[0]);
+
+
+
+
         }
+    });
+
+    $keyfile.on('fileclear', function () {
+        $key.val('');
+        $keyfilename.val('');
     });
 });
 
