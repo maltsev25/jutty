@@ -4,7 +4,7 @@
 [![NPM version](https://badge.fury.io/js/jutty.svg)](http://badge.fury.io/js/jutty)
 [![Dependency Status](https://img.shields.io/gemnasium/hobbyquaker/jutty.svg?maxAge=2592000)](https://gemnasium.com/github.com/hobbyquaker/jutty)
 
-> Web-based SSH/Telnet
+> Web-based SSH/Telnet client, useful in environments where only http(s) is allowed
 
 Forked from [wetty](https://github.com/krishnasrinivas/wetty)
 
