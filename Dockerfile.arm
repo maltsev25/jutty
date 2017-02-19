@@ -1,4 +1,4 @@
-FROM ncarlier/nodejs-arm:latest
+FROM hypriot/rpi-node:6.9.4
 MAINTAINER Sebastian Raff <hq@ccu.io>
 
 ADD . /app
