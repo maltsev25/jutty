@@ -6,8 +6,6 @@
 
 > Web-based SSH/Telnet client, useful in environments where only http(s) is allowed
 
-Forked from [wetty](https://github.com/krishnasrinivas/wetty)
-
 ![JuTTY Settings](/settings.png?raw=true)
 ![JuTTY](/terminal.png?raw=true)
 
@@ -78,6 +76,8 @@ This will start jutty on port 3000. If you want to change the port or redirect s
     exec sudo -u root jutty -p 80 >> /var/log/jutty.log 2>&1
 
 ## Credits
+
+Forked from [wetty](https://github.com/krishnasrinivas/wetty)
 
 #### Software used in JuTTY
 
