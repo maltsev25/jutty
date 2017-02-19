@@ -77,7 +77,7 @@ This will start jutty on port 3000. If you want to change the port or redirect s
 
 ## Credits
 
-Forked from [wetty](https://github.com/krishnasrinivas/wetty)
+Forked from [wetty](https://github.com/krishnasrinivas/wetty) Copyright (c) 2014 Krishna Srinivas    
 
 #### Software used in JuTTY
 
@@ -96,7 +96,6 @@ Forked from [wetty](https://github.com/krishnasrinivas/wetty)
 
 MIT
 
-Copyright (c) 2014 Krishna Srinivas    
 Copyright (c) 2016 [Sebastian Raff](https://github.com/hobbyquaker)
 
 [mit-badge]: https://img.shields.io/badge/License-MIT-blue.svg?style=flat
