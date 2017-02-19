@@ -89,12 +89,14 @@ This will start jutty on port 3000. If you want to change the port or redirect s
 * [bootswatch darkly theme](https://bootswatch.com/darkly/)
 * [bootstrap file input](http://plugins.krajee.com/file-input)
 * [store.js](https://github.com/marcuswestin/store.js/)
+* [yalm](https://github.com/hobbyquaker/yalm)
+* [optimist](https://github.com/substack/node-optimist)
 
 ## License
 
 MIT
 
-Copyright (c) 2014 Krishna Srinivas
+Copyright (c) 2014 Krishna Srinivas    
 Copyright (c) 2016 [Sebastian Raff](https://github.com/hobbyquaker)
 
 [mit-badge]: https://img.shields.io/badge/License-MIT-blue.svg?style=flat
