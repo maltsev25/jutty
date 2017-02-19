@@ -145,6 +145,7 @@ $(document).ready(function () {
         }
 
         $name.val('');
+        checkButtons();
     }
 
     function listConnections() {
@@ -213,10 +214,6 @@ $(document).ready(function () {
                 $key.val(e.target.result);
             };
             reader.readAsText(this.files[0]);
-
-
-
-
         }
     });
 
@@ -224,5 +221,44 @@ $(document).ready(function () {
         $key.val('');
         $keyfilename.val('');
     });
+
+    function checkButtons() {
+        var obj = getVals();
+        if (obj.type === 'ssh') {
+            if (obj.host && obj.user) {
+                $start.removeAttr('disabled');
+                if (obj.name) {
+                    $save.removeAttr('disabled');
+                } else {
+                    $save.attr('disabled', true);
+                }
+            } else {
+                $start.attr('disabled', true);
+                $save.attr('disabled', true);
+            }
+        } else {
+            if (obj.host) {
+                $start.removeAttr('disabled');
+                if (obj.name) {
+                    $save.removeAttr('disabled');
+                } else {
+                    $save.attr('disabled', true);
+                }
+            } else {
+                $start.attr('disabled', true);
+                $save.attr('disabled', true);
+            }
+        }
+    }
+
+    $name.keyup(checkButtons);
+    $host.keyup(checkButtons);
+    $user.keyup(checkButtons);
+    $ssh.change(checkButtons);
+    $telnet.change(checkButtons);
+
+    checkButtons();
+
+
 });
 
