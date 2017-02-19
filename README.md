@@ -4,7 +4,7 @@
 
 Forked from [wetty](https://github.com/krishnasrinivas/wetty)
 
-
+![JuTTY Settings](/settings.png?raw=true)
 ![JuTTY](/terminal.png?raw=true)
 
 ## Install
