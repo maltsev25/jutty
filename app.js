@@ -1,15 +1,15 @@
-var express =       require('express');
-var bodyParser =    require('body-parser');
-var http =          require('http');
-var https =         require('https');
-var path =          require('path');
-var server =        require('socket.io');
-var pty =           require('pty.js');
-var fs =            require('fs');
-var log =           require('yalm');
+let express =       require('express');
+let bodyParser =    require('body-parser');
+let http =          require('http');
+let https =         require('https');
+let path =          require('path');
+let server =        require('socket.io');
+let pty =           require('node-pty');
+let fs =            require('fs');
+let log =           require('yalm');
 log.setLevel('debug');
 
-var opts = require('optimist')
+let opts = require('optimist')
     .options({
         sslkey: {
             demand: false,
@@ -26,7 +26,7 @@ var opts = require('optimist')
         }
     }).boolean('allow_discovery').argv;
 
-var runhttps = false;
+let runhttps = false;
 
 if (opts.sslkey && opts.sslcert) {
     runhttps = true;
@@ -36,9 +36,9 @@ if (opts.sslkey && opts.sslcert) {
     };
 }
 
-var httpserv;
+let httpserv;
 
-var app = express();
+let app = express();
 
 app.use(bodyParser.urlencoded({
     extended: true
@@ -60,19 +60,20 @@ if (runhttps) {
     });
 }
 
-var io = server(httpserv, {path: '/socket.io'});
+let io = server(httpserv, {path: '/socket.io'});
 
-var term;
+let CLIENTS = [];
 
 io.on('connection', function (socket) {
-    log.info('socket.io connection');
+    log.info('socket.io connection: ' + socket.conn.id);
+    CLIENTS.push(socket);
 
     socket.on('start', function (data) {
 
-        var params;
+        let params;
 
         if (data.type === 'telnet') {
-            params = [data.host, data.port];
+            params = [data.host, data.port ? data.port : '23'];
         } else {
             data.type = 'ssh';
             params = [data.user + '@' + data.host];
@@ -80,7 +81,7 @@ io.on('connection', function (socket) {
 
         log.info(data.type, params.join(' '));
 
-        term = pty.spawn(data.type, params, {
+        let term = pty.spawn(data.type, params, {
             name: 'xterm-256color',
             cols: data.col,
             rows: data.row
@@ -97,18 +98,49 @@ io.on('connection', function (socket) {
             term = null;
         });
 
+        setConnectionTerm(socket, term);
     });
 
     socket.on('resize', function (data) {
-        term && term.resize(data.col, data.row);
+        let client = getConnection(socket);
+        if (client !== false)
+            client.term && client.term.resize(data.col, data.row);
     });
 
     socket.on('input', function (data) {
-        term && term.write(data);
+        let client = getConnection(socket);
+        if (client !== false)
+            client.term && client.term.write(data);
     });
 
     socket.on('disconnect', function () {
-        term && term.end();
+        removeClient(socket);
     });
 
 });
+
+function setConnectionTerm(socket, term) {
+    let index = CLIENTS.indexOf(socket);
+    log.debug('connection ' + index + ' setConnectionTerm ' + socket.conn.id);
+    if (index > -1) {
+        CLIENTS[index].term = term;
+    }
+}
+
+function getConnection(socket) {
+    let index = CLIENTS.indexOf(socket);
+    if (index > -1) {
+        return CLIENTS[index];
+    }
+    return false;
+}
+
+function removeClient(socket) {
+    let index = CLIENTS.indexOf(socket);
+    log.debug('connection ' + index + ' close ' + socket.conn.id);
+    if (index > -1) {
+        if (CLIENTS[index].term !== undefined)
+            CLIENTS[index].term.end();
+        CLIENTS.splice(index, 1);
+    }
+}

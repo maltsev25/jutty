@@ -1,33 +1,33 @@
 $(document).ready(function () {
 
 
-    var term;
+    let term;
     hterm.defaultStorage = new lib.Storage.Local();
 
-    var socket = io(location.origin, {path: '/socket.io'});
-    var buf = '';
+    let socket = io(location.origin, {path: '/socket.io'});
+    let buf = '';
 
-    var $settings =     $('#settings');
-    var $terminal =     $('#terminal');
-    var $start =        $('#start');
-    var $host =         $('#host');
-    var $user =         $('#user');
-    var $type =         $('#type');
-    var $port =         $('#port');
-    var $key =          $('#key');
-    var $keyfile =      $("#keyfile");
-    var $keyfilename =  $('#keyfilename');
-    var $back =         $('#back');
-    var $backbutton =   $('#backbutton');
-    var $name =         $('#name');
-    var $save =         $('#save');
-    var $connections =  $('#connections');
+    let $settings =     $('#settings');
+    let $terminal =     $('#terminal');
+    let $start =        $('#start');
+    let $host =         $('#host');
+    let $user =         $('#user');
+    let $type =         $('#type');
+    let $port =         $('#port');
+    let $key =          $('#key');
+    let $keyfile =      $("#keyfile");
+    let $keyfilename =  $('#keyfilename');
+    let $back =         $('#back');
+    let $backbutton =   $('#backbutton');
+    let $name =         $('#name');
+    let $save =         $('#save');
+    let $connections =  $('#connections');
 
-    var $ssh =          $('#ssh');
-    var $telnet =       $('#telnet');
-    var $sshOptions =   $('.ssh');
+    let $ssh =          $('#ssh');
+    let $telnet =       $('#telnet');
+    let $sshOptions =   $('.ssh');
 
-    var savedConnections = store.get('connections') || {};
+    let savedConnections = store.get('connections') || {};
     listConnections();
 
 
@@ -120,7 +120,7 @@ $(document).ready(function () {
         return {
             host:           $.trim($host.val()),
             user:           $.trim($user.val()),
-            type:           $ssh.is(':checked') ? 'ssh' : telnet,
+            type:           $ssh.is(':checked') ? 'ssh' : 'telnet',
             port:           $.trim($port.val()),
             key:            $.trim($key.val()),
             keyfilename:    $.trim($keyfilename.val()),
@@ -133,7 +133,7 @@ $(document).ready(function () {
         $host.val(obj.host || '');
         $user.val(obj.user || '');
         $type.val(obj.type || 'ssh');
-        $port.val(obj.port || '22');
+        $port.val(obj.port || obj.type === 'telnet' ? '23' : '22');
         $key.val(obj.key || '');
         $keyfilename.val(obj.keyfilename || '');
 
@@ -149,7 +149,7 @@ $(document).ready(function () {
     }
 
     function listConnections() {
-        var names = Object.keys(savedConnections).sort();
+        let names = Object.keys(savedConnections).sort();
         $connections.html('');
         names.forEach(function (name) {
             $connections.append('<a class="list-group-item load" href="#" data-target="' + name + '">' + name +
@@ -179,7 +179,8 @@ $(document).ready(function () {
     $start.click(start);
 
     function start() {
-        var vals = getVals();
+        let vals = getVals();
+        console.log(vals);
         htermInit(function () {
             vals.col = term.screenSize.width;
             vals.row = term.screenSize.height;
@@ -190,7 +191,7 @@ $(document).ready(function () {
     }
 
     $save.click(function () {
-        var vals = getVals();
+        let vals = getVals();
         savedConnections[vals.name] = vals;
         store.set('connections', savedConnections);
 
@@ -208,7 +209,7 @@ $(document).ready(function () {
 
     $keyfile.change(function () {
         if (this.files && this.files[0]) {
-            var reader = new FileReader();
+            let reader = new FileReader();
             $keyfilename.val(this.files[0].name);
             reader.onload = function (e) {
                 $key.val(e.target.result);
@@ -223,7 +224,7 @@ $(document).ready(function () {
     });
 
     function checkButtons() {
-        var obj = getVals();
+        let obj = getVals();
         if (obj.type === 'ssh') {
             if (obj.host && obj.user) {
                 $start.removeAttr('disabled');

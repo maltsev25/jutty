@@ -20,10 +20,10 @@ module.exports = function (grunt) {
         },
         shell: {
             build_hterm: {
-                command: 'LIBDOT_SEARCH_PATH=$(pwd) ./libdot/bin/concat.sh -i ./hterm/concat/hterm_all.concat -o ../../public/hterm_all.js',
+                command: 'npm install && npm run prepare && cp ./js/hterm_all.js ../../../public/',
                 options: {
                     execOptions: {
-                        cwd: './tmp/libapps'
+                        cwd: './tmp/libapps/hterm'
                     }
                 }
             }
