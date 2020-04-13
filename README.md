@@ -97,7 +97,7 @@ Forked from [jutty](https://github.com/hobbyquaker/jutty)
 
 MIT
 
-Copyright (c) 2016 [Sebastian Raff](https://github.com/hobbyquaker)
+Copyright (c) 2020 [Gleb](https://github.com/maltsev25)
 
 [mit-badge]: https://img.shields.io/badge/License-MIT-blue.svg?style=flat
 [mit-url]: LICENSE
