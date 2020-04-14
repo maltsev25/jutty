@@ -10,4 +10,4 @@ RUN apt-get install -y openssh-client telnet
 EXPOSE 3000
 
 ENTRYPOINT ["node"]
-CMD ["app.js", "-p", "3000"]
+CMD ["./dist/app.js"]

@@ -8,7 +8,6 @@
 > Multiple Terminal Support
 
 ![JuTTY Settings](/settings.png?raw=true)
-![JuTTY](/terminal.png?raw=true)
 
 ## Install
 
