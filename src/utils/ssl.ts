@@ -1,6 +1,7 @@
 import * as fs from "fs";
+import { env } from "../environment";
 
 export const ssl = {
-    key: fs.readFileSync('./sslcert/private.pem', 'utf-8'),
-    cert: fs.readFileSync('./sslcert/public.pem', 'utf-8'),
+    key: env.SSL ? fs.readFileSync('./sslcert/key.pem', 'utf-8') : '',
+    cert: env.SSL ? fs.readFileSync('./sslcert/cert.pem', 'utf-8') : '',
 };

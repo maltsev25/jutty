@@ -16,12 +16,12 @@ applyMiddleware(middleware, router);
 applyRoutes(routes, router);
 
 let server = null;
-if (env.NODE_ENV === 'development') {
-    // @ts-ignore
-    server = http.createServer(ssl, router);
-} else {
+if (env.SSL) {
     // @ts-ignore
     server = https.createServer(ssl, router);
+} else {
+    // @ts-ignore
+    server = http.createServer(router);
 }
 server.listen(env.PORT, () =>
     log.info(`Server is running on port: ${env.PORT}`)

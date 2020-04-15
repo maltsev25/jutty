@@ -12,15 +12,14 @@
 ## Install
 
 *  `git clone https://github.com/maltsev25/jutty`
-
 *  `cd jutty`
+*  `npm install --only=prod`
 
-*  `npm install`
+## do not forget configure .env
 
 ## Run on HTTP:
 
-    node app.js -p 3000
-
+    node ./dist/app.js
 
 ## Run on HTTPS:
 
@@ -31,8 +30,7 @@ create a self signed certificate using this command:
 
 And then run:
 
-    node app.js --sslkey key.pem --sslcert cert.pem -p 3000
-
+    node ./dist/app.js
 
 ## Run jutty behind nginx:
 
@@ -51,29 +49,16 @@ Put the following configuration in nginx's conf:
 	    proxy_set_header X-NginX-Proxy true;
     }
 
-
-
 **Note that if your Nginx is configured for HTTPS you should run jutty without SSL.**
-
-## Dockerized Version
-
-This repo includes a Dockerfile you can use to create a Dockerized version of jutty. 
- 
-
 
 ## Run jutty as a service daemon
 
-Install jutty globally with -g option:
+place bin/jutty.service in /etc/systemd/system
 
 ```bash
-    $ sudo npm install jutty -g
-    $ sudo cp /usr/local/lib/node_modules/jutty/bin/jutty.conf /etc/init
-    $ sudo start jutty
+    systemctl enable jutty.service
+    systemctl start jutty.service
 ```
-
-This will start jutty on port 3000. If you want to change the port or redirect stdout/stderr you should change the last line in `jutty.conf` file, something like this:
-
-    exec sudo -u root jutty -p 80 >> /var/log/jutty.log 2>&1
 
 ## Credits
 

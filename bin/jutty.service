@@ -12,8 +12,16 @@ After=network.target
 User=root
 Group=root
 
-WorkingDirectory=/usr/local/lib/node_modules/jutty # CHANGE ME
-ExecStart=/usr/bin/node app.js -p 3000
+# change WorkingDirectory to directory with project
+WorkingDirectory=/home/kj/PhpstormProjects/jutty
+ExecStart=/usr/bin/node dist/app.js
+
+Restart=always
+RestartSec=10
+
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=nodejs-jutty
 
 [Install]
 WantedBy=multi-user.target

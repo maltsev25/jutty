@@ -8,10 +8,6 @@ import { env } from '../environment';
 const pty = require('node-pty');
 const log = factory.getLogger("SocketIO");
 
-export interface ISocketIO extends SocketIO {
-    term: IPty;
-}
-
 export class SocketIO {
     protected io: SocketIO.Server;
     protected CLIENTS: any[];
