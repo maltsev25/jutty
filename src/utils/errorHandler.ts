@@ -19,7 +19,6 @@ export const clientError = (err: Error, res: Response, next: NextFunction) => {
 };
 
 export const serverError = (err: Error, res: Response, _next: NextFunction) => {
-    console.error(err);
     log.error(`serverError`, err);
     if (env.NODE_ENV === "production") {
         res.status(500).send("Internal Server Error");
