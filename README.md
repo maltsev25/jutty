@@ -74,8 +74,11 @@ Forked from [jutty](https://github.com/hobbyquaker/jutty)
 * [bootswatch darkly theme](https://bootswatch.com/darkly/)
 * [bootstrap file input](http://plugins.krajee.com/file-input)
 * [store.js](https://github.com/marcuswestin/store.js/)
-* [yalm](https://github.com/hobbyquaker/yalm)
-* [optimist](https://github.com/substack/node-optimist)
+* [express](http://expressjs.com/)
+* [body-parser](https://github.com/expressjs/body-parser)
+* [compression](https://github.com/expressjs/compression)
+* [cors](https://github.com/expressjs/cors)
+* [typescript-logging](https://github.com/mreuvers/typescript-logging)
 
 ## License
 
