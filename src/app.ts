@@ -4,6 +4,7 @@ import express from "express";
 import { applyMiddleware, applyRoutes } from "./utils";
 import routes from "./routes";
 import middleware from "./middleware";
+import errorHandlers from "./middleware/errorHandlers";
 import { env } from './environment';
 import { ssl } from "./utils/ssl";
 import { factory } from "./ConfigLog4j";
@@ -14,6 +15,7 @@ const log = factory.getLogger("app");
 const router = express();
 applyMiddleware(middleware, router);
 applyRoutes(routes, router);
+applyMiddleware(errorHandlers, router);
 
 let server = null;
 if (env.SSL) {
