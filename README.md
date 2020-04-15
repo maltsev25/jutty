@@ -53,7 +53,7 @@ Put the following configuration in nginx's conf:
 
 ## Run jutty as a service daemon
 
-place bin/jutty.service in /etc/systemd/system
+place `bin/jutty.service` in `/etc/systemd/system`
 
 ```bash
     systemctl enable jutty.service
