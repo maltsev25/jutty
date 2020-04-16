@@ -43,12 +43,12 @@ export class SocketIO {
                     rows: data.row
                 });
 
-                log.info(`${term.pid} spawned`);
+                log.debug(`${term.pid} spawned`);
                 term.onData(function (data: any) {
                     socket.emit('output', data);
                 });
                 term.onExit(function (_code: any) {
-                    log.info(`${term.pid} ended`);
+                    log.debug(`${term.pid} ended`);
                     socket.emit('end');
                     term.kill();
                 });
