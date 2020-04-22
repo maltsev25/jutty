@@ -60,30 +60,43 @@ $(document).ready(function () {
             window.term = term;
             term.decorate(document.getElementById('terminal'));
 
-            term.setCursorPosition(0, 0);
-            term.setCursorVisible(true);
+            setTimeout(() => {
+                let iframe = document.getElementById('terminal').getElementsByTagName('iframe');
+                if (iframe !== undefined) {
+                    htermInitiated(term, cb);
+                }
+            }, 200);
 
-            term.prefs_.set('ctrl-c-copy', true);
-            term.prefs_.set('ctrl-v-paste', true);
-            term.prefs_.set('use-default-window-copy', true);
-
-            term.runCommandClass(Jutty, document.location.hash.substr(1));
-
-            //socket.emit('start', {});
-
-            /*
-             socket.emit('resize', {
-             col: term.screenSize.width,
-             row: term.screenSize.height
-             });
-             */
-
-            if (buf && buf != '') {
-                term.io.writeUTF16(buf);
-                buf = '';
-            }
-            cb();
         });
+    }
+
+    function htermInitiated(term, cb) {
+        console.log('htermInitiated');
+        term.setCursorPosition(0, 0);
+        term.setCursorVisible(true);
+
+        term.prefs_.set('ctrl-c-copy', true);
+        term.prefs_.set('ctrl-v-paste', true);
+        term.prefs_.set('use-default-window-copy', true);
+        term.prefs_.set('backspace-sends-backspace', true);
+
+        term.runCommandClass(Jutty, document.location.hash.substr(1));
+
+        if (buf && buf != '') {
+            term.io.writeUTF16(buf);
+            buf = '';
+        }
+        cb();
+
+        let iframe = document.getElementById('terminal').getElementsByTagName('iframe');
+        let style = document.createElement('style');
+        style.innerHTML = (
+            'x-row {' +
+            '  display: block;' +
+            '  height: unset;' +
+            '  line-height: unset;' +
+            '}');
+        iframe[0].contentWindow.document.body.appendChild(style);
     }
 
     socket.on('connect', function () {
