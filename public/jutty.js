@@ -60,9 +60,10 @@ $(document).ready(function () {
             window.term = term;
             term.decorate(document.getElementById('terminal'));
 
-            setTimeout(() => {
+            let retry = setInterval(() => {
                 let iframe = document.getElementById('terminal').getElementsByTagName('iframe');
                 if (iframe !== undefined) {
+                    clearInterval(retry);
                     htermInitiated(term, cb);
                 }
             }, 200);
@@ -88,7 +89,6 @@ $(document).ready(function () {
         }
         cb();
 
-        let iframe = document.getElementById('terminal').getElementsByTagName('iframe');
         let style = document.createElement('style');
         style.innerHTML = (
             'x-row {' +
@@ -96,6 +96,7 @@ $(document).ready(function () {
             '  height: unset;' +
             '  line-height: unset;' +
             '}');
+        let iframe = document.getElementById('terminal').getElementsByTagName('iframe');
         iframe[0].contentWindow.document.body.appendChild(style);
     }
 
